@@ -1,0 +1,44 @@
+version: '3.8'
+
+# Thermal Viewer Backend
+# Note: Frontend is deployed separately via AWS Amplify (not containerized)
+
+services:
+  backend:
+    image: 058264237306.dkr.ecr.ap-southeast-1.amazonaws.com/thermal-viewer-backend:latest
+    container_name: thermal-viewer-backend
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      # AWS Configuration
+      - AWS_REGION=ap-southeast-1
+
+      # S3 Configuration
+      - S3_BUCKET=thermal-api-dev-storage-7ecb7171
+
+      # DynamoDB Tables
+      - IMAGES_TABLE=thermal-api-dev-images-7ecb7171
+      - JOBS_TABLE=thermal-api-dev-jobs-7ecb7171
+      - PADS_TABLE=thermal-api-dev-pads-7ecb7171
+
+      # Application Settings
+      - PORT=5001
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: thermal-viewer-network
+    driver: bridge
