@@ -157,9 +157,10 @@ def get_periods():
 
 @app.route('/api/pads', methods=['GET'])
 def get_pads():
-    """Get list of pads for a site and sector"""
+    """Get list of pads for a site and sector (filtered by completeness)"""
     site = request.args.get('site')
     sector = request.args.get('sector')
+    period = request.args.get('period')  # Optional: filter by completeness for this period
 
     if not site or not sector:
         return jsonify({'error': 'site and sector parameters required'}), 400
@@ -177,6 +178,21 @@ def get_pads():
             'pad_name': item.get('pad_name', item['pad_id'].split('_PAD_')[-1]),
             'geo_location_area': decimal_to_float(item.get('geo_location_area', []))
         } for item in response['Items']]
+
+        # Filter by completeness if period is provided
+        if period:
+            logger.info(f"Filtering pads for completeness: {site}/{sector}/{period}")
+            complete_pads = []
+            for pad in pads:
+                is_complete = mosaic_service.check_pad_completeness(
+                    site, sector, period, pad['pad_id']
+                )
+                if is_complete:
+                    complete_pads.append(pad)
+                else:
+                    logger.debug(f"Filtered out incomplete pad: {pad['pad_id']}")
+            pads = complete_pads
+            logger.info(f"Returning {len(pads)} complete pads (filtered from {len(response['Items'])} total)")
 
         # Sort by pad_name
         pads.sort(key=lambda x: x['pad_name'])

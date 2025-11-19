@@ -209,3 +209,106 @@ class MosaicService:
         except Exception as e:
             logger.error(f"Error calculating coverage stats: {e}")
             raise
+
+    def check_pad_completeness(
+        self,
+        site: str,
+        sector: str,
+        period: str,
+        pad_id: str
+    ) -> bool:
+        """
+        Check if a pad has all required mosaics with complete files in S3
+
+        A complete dataset must have:
+        - optical mosaic: odm_orthophoto.tif + shots.geojson
+        - medical mosaic: odm_orthophoto.tif + shots.geojson
+        - hotspot_alert mosaic: odm_orthophoto.tif + shots.geojson
+
+        Args:
+            site: Site ID
+            sector: Sector ID
+            period: Period (YYYYMMDD)
+            pad_id: Pad ID
+
+        Returns:
+            True if all 3 mosaic types are complete, False otherwise
+        """
+        required_types = ['optical', 'medical', 'hotspot_alert']
+
+        try:
+            # Query one image from this pad to get mosaic_prep status
+            response = self.images_table.query(
+                IndexName='SiteSectorPeriodIndex',
+                KeyConditionExpression='site_id = :site AND sector_period = :sp',
+                FilterExpression='pad_id = :pad',
+                ExpressionAttributeValues={
+                    ':site': site,
+                    ':sp': f"{sector}#{period}",
+                    ':pad': pad_id
+                },
+                Limit=1
+            )
+
+            if not response.get('Items'):
+                logger.warning(f"No images found for {site}/{sector}/{period}/{pad_id}")
+                return False
+
+            # Check processing_status.mosaic_prep
+            first_image = response['Items'][0]
+            processing_status = first_image.get('processing_status', {})
+            mosaic_prep = processing_status.get('mosaic_prep', {})
+            included_in = mosaic_prep.get('included_in', [])
+            mosaic_s3_keys = mosaic_prep.get('mosaic_s3_keys', {})
+
+            # Check if all 3 mosaic types are included
+            for mosaic_type in required_types:
+                if mosaic_type not in included_in:
+                    logger.debug(f"{pad_id}: Missing {mosaic_type} in included_in")
+                    return False
+
+                if mosaic_type not in mosaic_s3_keys:
+                    logger.debug(f"{pad_id}: Missing {mosaic_type} in mosaic_s3_keys")
+                    return False
+
+                # Verify both required files exist in S3
+                base_key = mosaic_s3_keys[mosaic_type]
+                orthophoto_key = f"{base_key}/odm_orthophoto.tif"
+                shots_key = f"{base_key}/shots.geojson"
+
+                if not self._s3_object_exists(orthophoto_key):
+                    logger.debug(f"{pad_id}: Missing S3 file {orthophoto_key}")
+                    return False
+
+                if not self._s3_object_exists(shots_key):
+                    logger.debug(f"{pad_id}: Missing S3 file {shots_key}")
+                    return False
+
+            logger.info(f"{pad_id}: Complete dataset verified")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking pad completeness for {pad_id}: {e}")
+            return False
+
+    def _s3_object_exists(self, s3_key: str) -> bool:
+        """
+        Check if S3 object exists
+
+        Args:
+            s3_key: S3 object key
+
+        Returns:
+            True if object exists, False otherwise
+        """
+        try:
+            self.s3.head_object(Bucket=self.s3_bucket, Key=s3_key)
+            return True
+        except self.s3.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return False
+            # Re-raise other errors (permissions, etc.)
+            raise
+        except Exception as e:
+            logger.error(f"Error checking S3 object {s3_key}: {e}")
+            return False
