@@ -179,6 +179,9 @@ def get_pads():
             'geo_location_area': decimal_to_float(item.get('geo_location_area', []))
         } for item in response['Items']]
 
+        # Debug: Log what pads were returned by the query
+        logger.info(f"Pads from table query: {[p['pad_id'] for p in pads]}")
+
         # Filter by completeness if period is provided
         if period:
             logger.info(f"Filtering pads for completeness: {site}/{sector}/{period}")
