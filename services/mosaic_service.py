@@ -264,11 +264,11 @@ class MosaicService:
             # Check if all 3 mosaic types are included
             for mosaic_type in required_types:
                 if mosaic_type not in included_in:
-                    logger.debug(f"{pad_id}: Missing {mosaic_type} in included_in")
+                    logger.warning(f"{pad_id}: Missing {mosaic_type} in included_in")
                     return False
 
                 if mosaic_type not in mosaic_s3_keys:
-                    logger.debug(f"{pad_id}: Missing {mosaic_type} in mosaic_s3_keys")
+                    logger.warning(f"{pad_id}: Missing {mosaic_type} in mosaic_s3_keys")
                     return False
 
                 # Verify both required files exist in S3
@@ -277,11 +277,11 @@ class MosaicService:
                 shots_key = f"{base_key}/shots.geojson"
 
                 if not self._s3_object_exists(orthophoto_key):
-                    logger.debug(f"{pad_id}: Missing S3 file {orthophoto_key}")
+                    logger.warning(f"{pad_id}: Missing S3 file {orthophoto_key}")
                     return False
 
                 if not self._s3_object_exists(shots_key):
-                    logger.debug(f"{pad_id}: Missing S3 file {shots_key}")
+                    logger.warning(f"{pad_id}: Missing S3 file {shots_key}")
                     return False
 
             logger.info(f"{pad_id}: Complete dataset verified")
