@@ -223,7 +223,8 @@ class MosaicService:
         A complete dataset must have:
         - optical mosaic: odm_orthophoto.tif + shots.geojson
         - medical mosaic: odm_orthophoto.tif + shots.geojson
-        - hotspot_alert mosaic: odm_orthophoto.tif + shots.geojson
+
+        Note: hotspot_alert is NOT required for viewer (used by PipeMeasure workflow)
 
         Args:
             site: Site ID
@@ -232,9 +233,9 @@ class MosaicService:
             pad_id: Pad ID
 
         Returns:
-            True if all 3 mosaic types are complete, False otherwise
+            True if optical and medical mosaics are complete, False otherwise
         """
-        required_types = ['optical', 'medical', 'hotspot_alert']
+        required_types = ['optical', 'medical']
 
         try:
             # Query one image from this pad to get mosaic_prep status
