@@ -5,6 +5,7 @@ Handles camera position data from ODM outputs
 
 import json
 import logging
+import math
 from typing import Dict
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,18 @@ class CameraService:
                     if thermal_metadata:
                         feature['properties']['temp_max'] = float(thermal_metadata.get('temperature_max', 0))
                         feature['properties']['temp_min'] = float(thermal_metadata.get('temperature_min', 0))
+
+                # Extract yaw from ODM rotation data (rotation[0] is yaw in radians)
+                rotation = feature['properties'].get('rotation')
+                if rotation and len(rotation) >= 1:
+                    # rotation[0] is yaw/heading in radians (from OpenDroneMap)
+                    yaw_radians = rotation[0]
+                    # Convert to degrees
+                    yaw_degrees = yaw_radians * (180.0 / math.pi)
+                    # Normalize to 0-360 range
+                    yaw_normalized = yaw_degrees % 360.0
+                    feature['properties']['yaw'] = round(yaw_normalized, 1)
+                    logger.debug(f"Extracted yaw for {optical_filename}: {yaw_radians} rad = {yaw_normalized}°")
 
             logger.info(f"Retrieved {len(geojson.get('features', []))} camera positions")
             return geojson
