@@ -226,43 +226,71 @@ class MosaicService:
 
         Note: hotspot_alert is NOT required for viewer (used by PipeMeasure workflow)
 
+        Data format (from DynamoDB):
+        - site_id: lowercase (e.g., "leyte")
+        - sector_period: "{sector}#{period}" (e.g., "malitbog#20250228-PMSB")
+        - pad_id: lowercase with underscores (e.g., "leyte_malitbog_PAD_msb")
+
         Args:
-            site: Site ID
-            sector: Sector ID
-            period: Period (YYYYMMDD)
-            pad_id: Pad ID
+            site: Site ID (will be normalized to lowercase)
+            sector: Sector ID (will be normalized to lowercase)
+            period: Period (YYYYMMDD or YYYYMMDD-CODE format)
+            pad_id: Pad ID (should already be lowercase from PADS table)
 
         Returns:
             True if optical and medical mosaics are complete, False otherwise
         """
         required_types = ['optical', 'medical']
 
+        # Normalize inputs to lowercase (critical for DynamoDB queries!)
+        site = site.lower()
+        sector = sector.lower()
+        # pad_id should already be lowercase from PADS table
+
         try:
-            # Query one image from this pad to get mosaic_prep status
+            # Step 1: Query ONE image from this pad/period to check metadata
+            logger.info(f"Checking completeness for {pad_id} in {site}/{sector}/{period}")
+
             response = self.images_table.query(
                 IndexName='SiteSectorPeriodIndex',
                 KeyConditionExpression='site_id = :site AND sector_period = :sp',
                 FilterExpression='pad_id = :pad',
                 ExpressionAttributeValues={
-                    ':site': site,
-                    ':sp': f"{sector}#{period}",
+                    ':site': site,                      # lowercase!
+                    ':sp': f"{sector}#{period}",       # lowercase sector!
                     ':pad': pad_id
-                },
-                Limit=1
+                }
+                # NOTE: No Limit here! DynamoDB applies FilterExpression AFTER reading Limit items.
+                # Using Limit=1 would only check the first item in index order, missing other pads.
+                # We scan all items matching KeyCondition, apply filter, use first match for metadata.
             )
 
+            # Step 2: Verify at least one image exists
             if not response.get('Items'):
-                logger.warning(f"No images found for {site}/{sector}/{period}/{pad_id}")
+                logger.warning(f"{pad_id}: No images found in DynamoDB")
                 return False
 
-            # Check processing_status.mosaic_prep
             first_image = response['Items'][0]
-            processing_status = first_image.get('processing_status', {})
-            mosaic_prep = processing_status.get('mosaic_prep', {})
+            logger.info(f"{pad_id}: Found image {first_image.get('image_id')}")
+
+            # Step 3: Check metadata structure exists (null-safe)
+            processing_status = first_image.get('processing_status')
+            if not processing_status:
+                logger.warning(f"{pad_id}: processing_status is null")
+                return False
+
+            mosaic_prep = processing_status.get('mosaic_prep')
+            if not mosaic_prep:
+                logger.warning(f"{pad_id}: mosaic_prep is null")
+                return False
+
             included_in = mosaic_prep.get('included_in', [])
             mosaic_s3_keys = mosaic_prep.get('mosaic_s3_keys', {})
 
-            # Check if all 3 mosaic types are included
+            logger.info(f"{pad_id}: included_in = {included_in}")
+            logger.info(f"{pad_id}: mosaic_s3_keys = {list(mosaic_s3_keys.keys())}")
+
+            # Step 4: Verify both required types are present in metadata
             for mosaic_type in required_types:
                 if mosaic_type not in included_in:
                     logger.warning(f"{pad_id}: Missing {mosaic_type} in included_in")
@@ -272,24 +300,32 @@ class MosaicService:
                     logger.warning(f"{pad_id}: Missing {mosaic_type} in mosaic_s3_keys")
                     return False
 
-                # Verify both required files exist in S3
+            # Step 5: Verify S3 files exist for both required types
+            for mosaic_type in required_types:
                 base_key = mosaic_s3_keys[mosaic_type]
-                orthophoto_key = f"{base_key}/odm_orthophoto.tif"
-                shots_key = f"{base_key}/shots.geojson"
 
-                if not self._s3_object_exists(orthophoto_key):
-                    logger.warning(f"{pad_id}: Missing S3 file {orthophoto_key}")
+                # Validate base_key format (should not be empty/null)
+                if not base_key or not isinstance(base_key, str):
+                    logger.warning(f"{pad_id}: Invalid base_key for {mosaic_type}: {base_key}")
                     return False
 
-                if not self._s3_object_exists(shots_key):
-                    logger.warning(f"{pad_id}: Missing S3 file {shots_key}")
-                    return False
+                # Required files for viewer
+                required_files = [
+                    f"{base_key}/odm_orthophoto.tif",
+                    f"{base_key}/shots.geojson"
+                ]
 
-            logger.info(f"{pad_id}: Complete dataset verified")
+                for s3_key in required_files:
+                    if not self._s3_object_exists(s3_key):
+                        logger.warning(f"{pad_id}: Missing S3 file {s3_key}")
+                        return False
+
+            # Step 6: Success!
+            logger.info(f"{pad_id}: COMPLETE ✓ (optical + medical verified)")
             return True
 
         except Exception as e:
-            logger.error(f"Error checking pad completeness for {pad_id}: {e}")
+            logger.error(f"{pad_id}: Error checking completeness - {e}")
             return False
 
     def _s3_object_exists(self, s3_key: str) -> bool:
