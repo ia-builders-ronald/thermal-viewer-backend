@@ -21,6 +21,7 @@ services:
       - IMAGES_TABLE=thermal-api-dev-images-7ecb7171
       - JOBS_TABLE=thermal-api-dev-jobs-7ecb7171
       - PADS_TABLE=thermal-api-dev-pads-7ecb7171
+      - MEASUREMENTS_TABLE=thermal-api-dev-measurements-7ecb7171
 
       # Application Settings
       - PORT=5001

@@ -14,6 +14,7 @@ from decimal import Decimal
 from services.mosaic_service import MosaicService
 from services.camera_service import CameraService
 from services.image_service import ImageService
+from services.pipemeasure_service import PipeMeasureService
 
 # Setup logging
 logging.basicConfig(
@@ -32,6 +33,7 @@ S3_BUCKET = os.environ.get('S3_BUCKET', 'thermal-api-dev-storage-7ecb7171')
 IMAGES_TABLE = os.environ.get('IMAGES_TABLE', 'thermal-api-dev-images-7ecb7171')
 JOBS_TABLE = os.environ.get('JOBS_TABLE', 'thermal-api-dev-jobs-7ecb7171')
 PADS_TABLE = os.environ.get('PADS_TABLE', 'thermal-api-dev-pads-7ecb7171')
+MEASUREMENTS_TABLE = os.environ.get('MEASUREMENTS_TABLE', 'thermal-api-dev-measurements-7ecb7171')
 
 # Initialize AWS clients
 s3_client = boto3.client('s3', region_name=AWS_REGION)
@@ -39,11 +41,13 @@ dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 images_table = dynamodb.Table(IMAGES_TABLE)
 jobs_table = dynamodb.Table(JOBS_TABLE)
 pads_table = dynamodb.Table(PADS_TABLE)
+measurements_table = dynamodb.Table(MEASUREMENTS_TABLE)
 
 # Initialize services
 mosaic_service = MosaicService(s3_client, S3_BUCKET, images_table, jobs_table)
 camera_service = CameraService(s3_client, S3_BUCKET, images_table)
 image_service = ImageService(s3_client, S3_BUCKET, images_table)
+pipemeasure_service = PipeMeasureService(measurements_table)
 
 
 # Helper function to convert Decimal to float for JSON serialization
@@ -335,6 +339,46 @@ def get_coverage_stats():
         return jsonify(decimal_to_float(stats))
     except Exception as e:
         logger.error(f"Error fetching coverage stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# PIPEMEASURE ENDPOINTS
+# ============================================================================
+
+@app.route('/api/pipemeasure/measurement/<site>/<sector>/<period>/<pad_id>', methods=['GET'])
+def get_pipe_measurement(site, sector, period, pad_id):
+    """
+    Get pipe measurement data for a specific PAD.
+
+    Retrieves aggregate statistics and individual region measurements for
+    anomalous pipe sections detected in thermal mosaics.
+
+    Args:
+        site: Site identifier (e.g., "leyte")
+        sector: Sector identifier (e.g., "malitbog")
+        period: Period identifier (e.g., "20250228-PMSB")
+        pad_id: PAD identifier (e.g., "leyte_malitbog_PAD_msb")
+
+    Returns:
+        JSON response with measurement data if found, 404 if not found
+
+    Example:
+        GET /api/pipemeasure/measurement/leyte/malitbog/20250228-PMSB/leyte_malitbog_PAD_msb
+    """
+    try:
+        measurement = pipemeasure_service.get_measurement(site, sector, period, pad_id)
+
+        if measurement is None:
+            return jsonify({
+                'error': 'Measurement not found',
+                'message': f'No measurement data available for PAD: {pad_id}'
+            }), 404
+
+        return jsonify(decimal_to_float(measurement))
+
+    except Exception as e:
+        logger.error(f"Error fetching pipe measurement for {site}/{sector}/{period}/{pad_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
 
