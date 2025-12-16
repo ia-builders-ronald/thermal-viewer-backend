@@ -382,6 +382,41 @@ def get_pipe_measurement(site, sector, period, pad_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/pipemeasure/measurements/<site>/<sector>/<period>', methods=['GET'])
+def get_sector_measurements(site, sector, period):
+    """
+    Get all pipe measurements for a sector/period.
+
+    Retrieves measurements for all PADs in a given sector and period.
+    Used for generating Line Loss Analytics Reports.
+
+    Args:
+        site: Site identifier (e.g., "leyte")
+        sector: Sector identifier (e.g., "malitbog")
+        period: Period identifier (e.g., "20250228-PMSB")
+
+    Returns:
+        JSON response with list of measurements for all pads in sector/period
+
+    Example:
+        GET /api/pipemeasure/measurements/leyte/malitbog/20250228-PMSB
+    """
+    try:
+        measurements = pipemeasure_service.get_measurements_by_sector(site, sector, period)
+
+        return jsonify({
+            'site': site,
+            'sector': sector,
+            'period': period,
+            'count': len(measurements),
+            'measurements': decimal_to_float(measurements)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching sector measurements for {site}/{sector}/{period}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================

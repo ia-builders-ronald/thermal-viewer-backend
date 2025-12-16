@@ -6,7 +6,7 @@ Provides aggregate statistics and individual region measurements for anomalous p
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,81 @@ class PipeMeasureService:
         except Exception as e:
             logger.error(
                 f"Error getting measurement by ID {measurement_id}: {e}",
+                exc_info=True
+            )
+            raise
+
+    def get_measurements_by_sector(
+        self,
+        site: str,
+        sector: str,
+        period: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all pipe measurements for a sector/period.
+
+        Queries the measurements table using the SiteSectorPeriodPadIndex GSI
+        with begins_with to retrieve all pad measurements for a given sector/period.
+
+        Args:
+            site: Site identifier (e.g., "leyte")
+            sector: Sector identifier (e.g., "malitbog")
+            period: Period identifier (e.g., "20250228-PMSB")
+
+        Returns:
+            List of measurement dictionaries for all pads in the sector/period.
+            Each measurement includes:
+            - pad_id: PAD identifier
+            - aggregate_stats: Total area, length, perimeter, region count
+            - geo_bounds: Geographic boundaries
+
+        Raises:
+            Exception: If DynamoDB query fails
+        """
+        try:
+            # Construct the GSI sort key prefix for begins_with query
+            # Format: {sector}#{period}#
+            sector_period_prefix = f"{sector}#{period}#"
+
+            logger.info(
+                f"Querying all measurements for site={site}, "
+                f"sector={sector}, period={period}"
+            )
+
+            # Query using the GSI with begins_with on sort key
+            response = self.measurements_table.query(
+                IndexName='SiteSectorPeriodPadIndex',
+                KeyConditionExpression='site_id = :site AND begins_with(sector_period_pad, :prefix)',
+                ExpressionAttributeValues={
+                    ':site': site,
+                    ':prefix': sector_period_prefix
+                }
+            )
+
+            items = response.get('Items', [])
+
+            # Handle pagination if there are more results
+            while 'LastEvaluatedKey' in response:
+                response = self.measurements_table.query(
+                    IndexName='SiteSectorPeriodPadIndex',
+                    KeyConditionExpression='site_id = :site AND begins_with(sector_period_pad, :prefix)',
+                    ExpressionAttributeValues={
+                        ':site': site,
+                        ':prefix': sector_period_prefix
+                    },
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                items.extend(response.get('Items', []))
+
+            logger.info(
+                f"Found {len(items)} measurements for {site}/{sector}/{period}"
+            )
+
+            return items
+
+        except Exception as e:
+            logger.error(
+                f"Error querying measurements for {site}/{sector}/{period}: {e}",
                 exc_info=True
             )
             raise
