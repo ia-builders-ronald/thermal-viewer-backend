@@ -2,10 +2,11 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install system dependencies for GDAL (georeferencing support)
+# Install system dependencies for GDAL (georeferencing) and LibreOffice (PDF conversion)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libgdal-dev \
+        libreoffice \
         && \
     rm -rf /var/lib/apt/lists/*
 

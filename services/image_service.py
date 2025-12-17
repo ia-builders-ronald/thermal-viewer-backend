@@ -113,7 +113,7 @@ class ImageService:
             image_id: Image ID
 
         Returns:
-            Dictionary with temperature statistics
+            Dictionary with temperature statistics including dataset-wide temperature range
         """
         try:
             # Get image record from DynamoDB
@@ -162,6 +162,26 @@ class ImageService:
                         'humidity': float(thermal_metadata.get('relative_humidity', 0))
                     }
                 }
+
+            # Extract dataset-wide temperature range from colormapping metadata
+            processing_status = item.get('processing_status')
+            if processing_status:
+                colormapping = processing_status.get('colormapping')
+                if colormapping:
+                    medical_palette = colormapping.get('medical')
+                    if medical_palette:
+                        temperature_stats = medical_palette.get('temperature_stats')
+                        if temperature_stats:
+                            stats['dataset_temperature_range'] = {
+                                'min_temp_c': float(temperature_stats.get('min_temp_c', 0)),
+                                'max_temp_c': float(temperature_stats.get('max_temp_c', 0)),
+                                'mean_temp_c': float(temperature_stats.get('mean_temp_c', 0)),
+                                'normalization': temperature_stats.get('normalization', 'unknown'),
+                                'sample_size': int(temperature_stats.get('sample_size', 0))
+                            }
+                            logger.info(f"Retrieved dataset temperature range for {image_id}: "
+                                      f"{stats['dataset_temperature_range']['min_temp_c']:.1f} - "
+                                      f"{stats['dataset_temperature_range']['max_temp_c']:.1f} °C")
 
             logger.info(f"Retrieved thermal stats for {image_id} (calibrated: {is_calibrated})")
             return stats

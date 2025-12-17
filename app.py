@@ -3,11 +3,12 @@ Thermal Viewer Backend API
 Flask server providing REST endpoints for thermal mosaic viewer
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import ClientError
 import os
+import io
 import logging
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ from services.mosaic_service import MosaicService
 from services.camera_service import CameraService
 from services.image_service import ImageService
 from services.pipemeasure_service import PipeMeasureService
+from services.report_service import ReportService
 
 # Setup logging
 logging.basicConfig(
@@ -48,6 +50,9 @@ mosaic_service = MosaicService(s3_client, S3_BUCKET, images_table, jobs_table)
 camera_service = CameraService(s3_client, S3_BUCKET, images_table)
 image_service = ImageService(s3_client, S3_BUCKET, images_table)
 pipemeasure_service = PipeMeasureService(measurements_table)
+report_service = ReportService(
+    template_path=os.path.join(os.path.dirname(__file__), 'templates', 'line-loss-template.docx')
+)
 
 
 # Helper function to convert Decimal to float for JSON serialization
@@ -418,6 +423,72 @@ def get_sector_measurements(site, sector, period):
 
 
 # ============================================================================
+# REPORT GENERATION ENDPOINTS
+# ============================================================================
+
+@app.route('/api/report/generate', methods=['POST'])
+def generate_report():
+    """
+    Generate Line Loss Analytics PDF report.
+
+    Receives report data from frontend, fills Word template with data,
+    converts to PDF using LibreOffice, and returns the PDF file.
+
+    Request Body (JSON):
+        {
+            "site": "EDC",
+            "sector": "MAHANAGDONG",
+            "rows": [
+                {"section": "Pad 101", "length": "1.50"},
+                {"section": "Pad 102", "length": "N/A"}
+            ]
+        }
+
+    Returns:
+        PDF file as attachment
+
+    Example:
+        POST /api/report/generate
+        Content-Type: application/json
+        {"site": "EDC", "sector": "TEST", "rows": [...]}
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        # Validate required fields
+        required = ['site', 'sector', 'rows']
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({'error': f'Missing required fields: {missing}'}), 400
+
+        # Validate rows structure
+        if not isinstance(data['rows'], list):
+            return jsonify({'error': 'rows must be an array'}), 400
+
+        logger.info(f"Generating report for {data['site']}/{data['sector']} with {len(data['rows'])} rows")
+
+        # Generate PDF
+        pdf_bytes = report_service.generate_pdf(data)
+
+        # Return PDF file
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"line-loss-report-{data['sector']}.pdf"
+        )
+
+    except FileNotFoundError as e:
+        logger.error(f"Template file not found: {e}")
+        return jsonify({'error': 'Report template not found. Please contact administrator.'}), 500
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -456,6 +527,9 @@ def root():
             ],
             'stats': [
                 '/api/coverage/stats'
+            ],
+            'reports': [
+                '/api/report/generate (POST)'
             ]
         }
     })
