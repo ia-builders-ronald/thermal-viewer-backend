@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Cognito User Pool for Thermal Viewer / Line Loss Analytics application.
+  Creates a User Pool with email sign-in and an App Client for the web frontend.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name (used in resource naming)
+
+  AppName:
+    Type: String
+    Default: thermal-viewer
+    Description: Application name (used in resource naming)
+
+Resources:
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AppName}-${Environment}-users
+
+      # Sign-in configuration
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+      # Password policy
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+
+      # Account recovery
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+      # Admin create user config (no self-registration)
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: !Sub "Your ${AppName} account"
+          EmailMessage: >
+            Your administrator has created an account for you.
+            Username: {username}
+            Temporary password: {####}
+            Please sign in and change your password.
+
+      # Email configuration (using Cognito default)
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+
+      # Schema attributes
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+
+      # Tags
+      UserPoolTags:
+        Environment: !Ref Environment
+        Application: !Ref AppName
+
+  # App Client for web frontend (SPA)
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AppName}-${Environment}-web
+      UserPoolId: !Ref UserPool
+
+      # No client secret (required for SPA/browser apps)
+      GenerateSecret: false
+
+      # Auth flows
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+      # Token validity
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+      # Prevent user existence errors
+      PreventUserExistenceErrors: ENABLED
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub ${AWS::StackName}-UserPoolId
+
+  UserPoolArn:
+    Description: Cognito User Pool ARN
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-UserPoolArn
+
+  AppClientId:
+    Description: Cognito App Client ID (for frontend configuration)
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub ${AWS::StackName}-AppClientId
+
+  CognitoRegion:
+    Description: AWS Region where Cognito is deployed
+    Value: !Ref AWS::Region
+    Export:
+      Name: !Sub ${AWS::StackName}-Region
