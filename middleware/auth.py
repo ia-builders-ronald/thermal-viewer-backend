@@ -161,8 +161,9 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         # Skip auth for OPTIONS preflight requests (CORS)
+        # Return empty response - Flask-CORS will add the headers
         if request.method == 'OPTIONS':
-            return f(*args, **kwargs)
+            return '', 200
 
         # Skip auth if Cognito is not configured (development mode)
         if not COGNITO_USER_POOL_ID:
