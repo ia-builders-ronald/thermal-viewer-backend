@@ -17,6 +17,7 @@ from services.camera_service import CameraService
 from services.image_service import ImageService
 from services.pipemeasure_service import PipeMeasureService
 from services.report_service import ReportService
+from middleware.auth import require_auth, init_auth
 
 # Setup logging
 logging.basicConfig(
@@ -54,6 +55,9 @@ report_service = ReportService(
     template_path=os.path.join(os.path.dirname(__file__), 'templates', 'line-loss-template.docx')
 )
 
+# Initialize authentication
+init_auth(app)
+
 
 # Helper function to convert Decimal to float for JSON serialization
 def decimal_to_float(obj):
@@ -71,6 +75,7 @@ def decimal_to_float(obj):
 # ============================================================================
 
 @app.route('/api/sites', methods=['GET'])
+@require_auth
 def get_sites():
     """Get list of all sites"""
     try:
@@ -100,6 +105,7 @@ def get_sites():
 
 
 @app.route('/api/sectors', methods=['GET'])
+@require_auth
 def get_sectors():
     """Get list of sectors for a site"""
     site = request.args.get('site')
@@ -137,6 +143,7 @@ def get_sectors():
 
 
 @app.route('/api/periods', methods=['GET'])
+@require_auth
 def get_periods():
     """Get list of periods for a site and sector"""
     site = request.args.get('site')
@@ -165,6 +172,7 @@ def get_periods():
 
 
 @app.route('/api/pads', methods=['GET'])
+@require_auth
 def get_pads():
     """Get list of pads for a site and sector (filtered by completeness)"""
     site = request.args.get('site')
@@ -220,6 +228,7 @@ def get_pads():
 # ============================================================================
 
 @app.route('/api/mosaic/metadata', methods=['GET'])
+@require_auth
 def get_mosaic_metadata():
     """Get mosaic job metadata and statistics"""
     site = request.args.get('site')
@@ -242,6 +251,7 @@ def get_mosaic_metadata():
 
 
 @app.route('/api/mosaic/orthomosaic', methods=['GET'])
+@require_auth
 def get_orthomosaic_url():
     """Get presigned URL for orthomosaic GeoTIFF"""
     site = request.args.get('site')
@@ -264,6 +274,7 @@ def get_orthomosaic_url():
 
 
 @app.route('/api/mosaic/cameras', methods=['GET'])
+@require_auth
 def get_cameras():
     """Get camera positions as GeoJSON"""
     site = request.args.get('site')
@@ -290,6 +301,7 @@ def get_cameras():
 # ============================================================================
 
 @app.route('/api/optical/<image_id>', methods=['GET'])
+@require_auth
 def get_optical_image(image_id):
     """Get presigned URL for optical image"""
     try:
@@ -301,6 +313,7 @@ def get_optical_image(image_id):
 
 
 @app.route('/api/thermal/<image_id>', methods=['GET'])
+@require_auth
 def get_thermal_image(image_id):
     """Get presigned URL for colored thermal image"""
     palette = request.args.get('palette', 'medical')
@@ -314,6 +327,7 @@ def get_thermal_image(image_id):
 
 
 @app.route('/api/thermal/<image_id>/stats', methods=['GET'])
+@require_auth
 def get_thermal_stats(image_id):
     """Get temperature statistics for thermal image"""
     try:
@@ -329,6 +343,7 @@ def get_thermal_stats(image_id):
 # ============================================================================
 
 @app.route('/api/coverage/stats', methods=['GET'])
+@require_auth
 def get_coverage_stats():
     """Get coverage statistics for a mosaic"""
     site = request.args.get('site')
@@ -352,6 +367,7 @@ def get_coverage_stats():
 # ============================================================================
 
 @app.route('/api/pipemeasure/measurement/<site>/<sector>/<period>/<pad_id>', methods=['GET'])
+@require_auth
 def get_pipe_measurement(site, sector, period, pad_id):
     """
     Get pipe measurement data for a specific PAD.
@@ -388,6 +404,7 @@ def get_pipe_measurement(site, sector, period, pad_id):
 
 
 @app.route('/api/pipemeasure/measurements/<site>/<sector>/<period>', methods=['GET'])
+@require_auth
 def get_sector_measurements(site, sector, period):
     """
     Get all pipe measurements for a sector/period.
@@ -427,6 +444,7 @@ def get_sector_measurements(site, sector, period):
 # ============================================================================
 
 @app.route('/api/report/generate', methods=['POST'])
+@require_auth
 def generate_report():
     """
     Generate Line Loss Analytics PDF report.

@@ -26,6 +26,10 @@ services:
       # Application Settings
       - PORT=5001
 
+      # Cognito Authentication
+      - COGNITO_REGION=ap-southeast-1
+      - COGNITO_USER_POOL_ID=ap-southeast-1_fwuioqTOs
+
     logging:
       driver: "json-file"
       options:
