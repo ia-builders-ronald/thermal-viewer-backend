@@ -160,6 +160,10 @@ def require_auth(f):
     """
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Skip auth for OPTIONS preflight requests (CORS)
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+
         # Skip auth if Cognito is not configured (development mode)
         if not COGNITO_USER_POOL_ID:
             logger.warning("COGNITO_USER_POOL_ID not set - authentication disabled")
