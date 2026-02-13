@@ -4,7 +4,8 @@ Handles image retrieval and temperature statistics
 """
 
 import logging
-from typing import Dict
+from typing import Dict, Optional
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,74 @@ class ImageService:
         self.s3 = s3_client
         self.s3_bucket = s3_bucket
         self.images_table = images_table
+
+    def _get_colorbar_url(self, item: Dict, palette: str = 'medical') -> Optional[str]:
+        """
+        Generate presigned URL for colorbar image if it exists.
+
+        Colorbar path: colored/{palette}/{site}/{sector}/{period}/{image_name}_colorbar.png
+
+        Args:
+            item: DynamoDB image record
+            palette: Color palette (medical)
+
+        Returns:
+            Presigned URL or None if colorbar doesn't exist
+        """
+        try:
+            site = item.get('site_id')
+            sector = item.get('sector_id')
+            period = item.get('period')
+
+            if not all([site, sector, period]):
+                logger.warning(f"Missing site/sector/period for colorbar lookup")
+                return None
+
+            # Get image name from thermal filename
+            # thermal_filename is like "DJI_0539_T.JPG" - need to strip extension
+            thermal_filename = item.get('thermal_filename')
+            if not thermal_filename:
+                # Fallback: derive from image_id (e.g., "leyte_mahanagdong-b_20250409_DJI_0539_T")
+                image_id = item.get('image_id', '')
+                parts = image_id.split('_')
+                if len(parts) >= 4:
+                    # Extract the DJI part (last 3 parts typically: DJI_XXXX_T)
+                    thermal_filename = '_'.join(parts[-3:])
+                else:
+                    logger.warning(f"Cannot derive thermal filename from image_id: {image_id}")
+                    return None
+
+            # Strip file extension (.JPG, .jpg, etc.) from thermal_filename
+            image_name = thermal_filename.rsplit('.', 1)[0] if '.' in thermal_filename else thermal_filename
+
+            # Construct colorbar S3 key
+            colorbar_key = f"colored/{palette}/{site}/{sector}/{period}/{image_name}_colorbar.png"
+
+            # Check if colorbar exists
+            try:
+                self.s3.head_object(Bucket=self.s3_bucket, Key=colorbar_key)
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    logger.debug(f"Colorbar not found: {colorbar_key}")
+                    return None
+                raise
+
+            # Generate presigned URL
+            url = self.s3.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.s3_bucket,
+                    'Key': colorbar_key
+                },
+                ExpiresIn=3600
+            )
+
+            logger.info(f"Generated colorbar URL: {colorbar_key}")
+            return url
+
+        except Exception as e:
+            logger.error(f"Error generating colorbar URL: {e}")
+            return None
 
     def get_optical_image_url(self, image_id: str) -> str:
         """
@@ -63,16 +132,16 @@ class ImageService:
             logger.error(f"Error generating optical image URL: {e}")
             raise
 
-    def get_thermal_image_url(self, image_id: str, palette: str = 'medical') -> str:
+    def get_thermal_image_url(self, image_id: str, palette: str = 'medical') -> Dict:
         """
-        Generate presigned URL for colored thermal image
+        Generate presigned URL for colored thermal image and colorbar
 
         Args:
             image_id: Image ID
             palette: Color palette (medical or hotspot_alert)
 
         Returns:
-            Presigned S3 URL
+            Dictionary with 'url' (thermal image) and 'colorbar_url' (colorbar image or None)
         """
         try:
             # Get image record from DynamoDB
@@ -98,8 +167,14 @@ class ImageService:
                 ExpiresIn=3600  # 1 hour
             )
 
+            # Get colorbar URL (may be None if colorbar doesn't exist)
+            colorbar_url = self._get_colorbar_url(item, palette)
+
             logger.info(f"Generated thermal image URL ({palette}) for {image_id}")
-            return url
+            return {
+                'url': url,
+                'colorbar_url': colorbar_url
+            }
 
         except Exception as e:
             logger.error(f"Error generating thermal image URL: {e}")

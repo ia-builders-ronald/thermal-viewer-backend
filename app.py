@@ -315,12 +315,13 @@ def get_optical_image(image_id):
 @app.route('/api/thermal/<image_id>', methods=['GET'])
 @require_auth
 def get_thermal_image(image_id):
-    """Get presigned URL for colored thermal image"""
+    """Get presigned URL for colored thermal image and colorbar"""
     palette = request.args.get('palette', 'medical')
 
     try:
-        url = image_service.get_thermal_image_url(image_id, palette)
-        return jsonify({'url': url})
+        result = image_service.get_thermal_image_url(image_id, palette)
+        # result contains 'url' and 'colorbar_url' (may be None)
+        return jsonify(result)
     except Exception as e:
         logger.error(f"Error generating thermal image URL: {e}")
         return jsonify({'error': str(e)}), 500
