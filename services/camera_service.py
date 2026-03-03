@@ -55,19 +55,27 @@ class CameraService:
             response = self.s3.get_object(Bucket=self.s3_bucket, Key=s3_key)
             geojson = json.loads(response['Body'].read())
 
-            # Query images table to get image_id mapping
-            image_response = self.images_table.query(
-                IndexName='SiteSectorPeriodIndex',
-                KeyConditionExpression='site_id = :site AND sector_period = :sp',
-                FilterExpression='pad_id = :pad',
-                ExpressionAttributeValues={
+            # Query images table to get image_id mapping (with pagination)
+            all_items = []
+            query_kwargs = {
+                'IndexName': 'SiteSectorPeriodIndex',
+                'KeyConditionExpression': 'site_id = :site AND sector_period = :sp',
+                'FilterExpression': 'pad_id = :pad',
+                'ExpressionAttributeValues': {
                     ':site': site,
                     ':sp': f"{sector}#{period}",
                     ':pad': pad_id
                 }
-            )
+            }
+            while True:
+                image_response = self.images_table.query(**query_kwargs)
+                all_items.extend(image_response['Items'])
+                if 'LastEvaluatedKey' not in image_response:
+                    break
+                query_kwargs['ExclusiveStartKey'] = image_response['LastEvaluatedKey']
 
-            images = {img['optical_filename']: img for img in image_response['Items']}
+            images = {img['optical_filename']: img for img in all_items}
+            logger.info(f"Found {len(images)} images in DynamoDB for pad {pad_id}")
 
             # Enrich GeoJSON features with metadata
             for feature in geojson.get('features', []):

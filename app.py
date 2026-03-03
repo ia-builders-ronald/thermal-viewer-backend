@@ -153,16 +153,24 @@ def get_periods():
         return jsonify({'error': 'site and sector parameters required'}), 400
 
     try:
-        # Query images table for periods
-        response = images_table.scan(
-            FilterExpression='site_id = :site AND sector_id = :sector',
-            ExpressionAttributeValues={
+        # Query images table for periods (with pagination)
+        all_items = []
+        scan_kwargs = {
+            'FilterExpression': 'site_id = :site AND sector_id = :sector',
+            'ExpressionAttributeValues': {
                 ':site': site,
                 ':sector': sector
             },
-            ProjectionExpression='period'
-        )
-        periods = list(set(item['period'] for item in response['Items']))
+            'ProjectionExpression': 'period'
+        }
+        while True:
+            response = images_table.scan(**scan_kwargs)
+            all_items.extend(response['Items'])
+            if 'LastEvaluatedKey' not in response:
+                break
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+
+        periods = list(set(item['period'] for item in all_items))
         periods.sort(reverse=True)  # Most recent first
 
         return jsonify(periods)

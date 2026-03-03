@@ -87,20 +87,25 @@ class MosaicService:
         Returns:
             Metadata dictionary
         """
-        # Query images for this pad to get image count
+        # Query images for this pad to get image count (with pagination)
         try:
-            response = self.images_table.query(
-                IndexName='SiteSectorPeriodIndex',
-                KeyConditionExpression='site_id = :site AND sector_period = :sp',
-                FilterExpression='pad_id = :pad',
-                ExpressionAttributeValues={
+            images = []
+            query_kwargs = {
+                'IndexName': 'SiteSectorPeriodIndex',
+                'KeyConditionExpression': 'site_id = :site AND sector_period = :sp',
+                'FilterExpression': 'pad_id = :pad',
+                'ExpressionAttributeValues': {
                     ':site': site,
                     ':sp': f"{sector}#{period}",
                     ':pad': pad_id
                 }
-            )
-
-            images = response.get('Items', [])
+            }
+            while True:
+                response = self.images_table.query(**query_kwargs)
+                images.extend(response['Items'])
+                if 'LastEvaluatedKey' not in response:
+                    break
+                query_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
 
             # Check if mosaic exists
             mosaic_exists = False
@@ -146,19 +151,24 @@ class MosaicService:
             Coverage statistics
         """
         try:
-            # Query images for this pad
-            response = self.images_table.query(
-                IndexName='SiteSectorPeriodIndex',
-                KeyConditionExpression='site_id = :site AND sector_period = :sp',
-                FilterExpression='pad_id = :pad',
-                ExpressionAttributeValues={
+            # Query images for this pad (with pagination)
+            images = []
+            query_kwargs = {
+                'IndexName': 'SiteSectorPeriodIndex',
+                'KeyConditionExpression': 'site_id = :site AND sector_period = :sp',
+                'FilterExpression': 'pad_id = :pad',
+                'ExpressionAttributeValues': {
                     ':site': site,
                     ':sp': f"{sector}#{period}",
                     ':pad': pad_id
                 }
-            )
-
-            images = response.get('Items', [])
+            }
+            while True:
+                response = self.images_table.query(**query_kwargs)
+                images.extend(response['Items'])
+                if 'LastEvaluatedKey' not in response:
+                    break
+                query_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
 
             if not images:
                 return {
@@ -251,26 +261,36 @@ class MosaicService:
             # Step 1: Query ONE image from this pad/period to check metadata
             logger.info(f"Checking completeness for {pad_id} in {site}/{sector}/{period}")
 
-            response = self.images_table.query(
-                IndexName='SiteSectorPeriodIndex',
-                KeyConditionExpression='site_id = :site AND sector_period = :sp',
-                FilterExpression='pad_id = :pad',
-                ExpressionAttributeValues={
+            # Paginate to ensure we find matching items even in large datasets
+            all_items = []
+            query_kwargs = {
+                'IndexName': 'SiteSectorPeriodIndex',
+                'KeyConditionExpression': 'site_id = :site AND sector_period = :sp',
+                'FilterExpression': 'pad_id = :pad',
+                'ExpressionAttributeValues': {
                     ':site': site,                      # lowercase!
                     ':sp': f"{sector}#{period}",       # lowercase sector!
                     ':pad': pad_id
                 }
                 # NOTE: No Limit here! DynamoDB applies FilterExpression AFTER reading Limit items.
                 # Using Limit=1 would only check the first item in index order, missing other pads.
-                # We scan all items matching KeyCondition, apply filter, use first match for metadata.
-            )
+            }
+            while True:
+                response = self.images_table.query(**query_kwargs)
+                all_items.extend(response['Items'])
+                # For completeness check we only need one match, so break early if found
+                if all_items:
+                    break
+                if 'LastEvaluatedKey' not in response:
+                    break
+                query_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
 
             # Step 2: Verify at least one image exists
-            if not response.get('Items'):
+            if not all_items:
                 logger.warning(f"{pad_id}: No images found in DynamoDB")
                 return False
 
-            first_image = response['Items'][0]
+            first_image = all_items[0]
             logger.info(f"{pad_id}: Found image {first_image.get('image_id')}")
 
             # Step 3: Check metadata structure exists (null-safe)
