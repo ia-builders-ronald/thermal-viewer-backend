@@ -200,15 +200,27 @@ class ImageService:
 
             thermal_metadata = item.get('thermal_metadata', {})
 
+            # Helper: get temperature value, falling back to _raw variant for images with no hotspots
+            # Filtered values (temperature_min/max/avg) are only written when hotspot_count > 0.
+            # Raw values (temperature_min_raw/max_raw/avg_raw) are always present.
+            def _temp(field: str) -> float:
+                val = thermal_metadata.get(field)
+                if val is not None:
+                    return float(val)
+                raw_val = thermal_metadata.get(f'{field}_raw')
+                if raw_val is not None:
+                    return float(raw_val)
+                return 0.0
+
             # Check if image has calibration data
             calibration = item.get('calibration', {})
             is_calibrated = calibration.get('status') == 'calibrated'
 
             if is_calibrated:
-                # Use calibrated temperatures
+                # Use calibrated temperatures from calibration.temperature_delta
                 temp_delta = calibration.get('temperature_delta', {})
                 stats = {
-                    'min_temp': float(thermal_metadata.get('temperature_min', 0)),
+                    'min_temp': float(temp_delta.get('min_calibrated', 0)),
                     'max_temp': float(temp_delta.get('max_calibrated', 0)),
                     'avg_temp': float(temp_delta.get('avg_calibrated', 0)),
                     'is_calibrated': True,
@@ -222,11 +234,11 @@ class ImageService:
                     }
                 }
             else:
-                # Use original temperatures
+                # Use original temperatures (fall back to _raw for no-hotspot images)
                 stats = {
-                    'min_temp': float(thermal_metadata.get('temperature_min', 0)),
-                    'max_temp': float(thermal_metadata.get('temperature_max', 0)),
-                    'avg_temp': float(thermal_metadata.get('temperature_avg', 0)),
+                    'min_temp': _temp('temperature_min'),
+                    'max_temp': _temp('temperature_max'),
+                    'avg_temp': _temp('temperature_avg'),
                     'is_calibrated': False,
                     'palette': 'medical',
                     'original_params': {

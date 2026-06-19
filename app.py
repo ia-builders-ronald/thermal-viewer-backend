@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 import os
 import io
 import logging
+import concurrent.futures
 from decimal import Decimal
 
 from services.mosaic_service import MosaicService
@@ -25,6 +26,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Max parallel workers for per-pad completeness checks
+PAD_COMPLETENESS_MAX_WORKERS = 16
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -73,6 +77,79 @@ def decimal_to_float(obj):
 # ============================================================================
 # DATA DISCOVERY ENDPOINTS
 # ============================================================================
+
+@app.route('/api/navigation', methods=['GET'])
+@require_auth
+def get_navigation():
+    """Get full site → sector → periods hierarchy in one call for preloading dropdowns"""
+    try:
+        # Step 1: Scan pads table for all site/sector pairs
+        all_pad_items = []
+        scan_kwargs = {
+            'ProjectionExpression': '#site, #sector',
+            'FilterExpression': 'attribute_exists(#site) AND attribute_exists(#sector)',
+            'ExpressionAttributeNames': {'#site': 'site', '#sector': 'sector'}
+        }
+        response = pads_table.scan(**scan_kwargs)
+        all_pad_items.extend(response['Items'])
+        while 'LastEvaluatedKey' in response:
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+            response = pads_table.scan(**scan_kwargs)
+            all_pad_items.extend(response['Items'])
+
+        # Build site → sectors map
+        site_sectors: dict[str, set[str]] = {}
+        for item in all_pad_items:
+            site = item['site']
+            sector = item['sector']
+            if site not in site_sectors:
+                site_sectors[site] = set()
+            site_sectors[site].add(sector)
+
+        # Step 2: Scan images table for all site/sector/period combinations
+        all_image_items = []
+        scan_kwargs = {
+            'ProjectionExpression': 'site_id, sector_id, period',
+            'FilterExpression': 'attribute_exists(site_id) AND attribute_exists(period)'
+        }
+        response = images_table.scan(**scan_kwargs)
+        all_image_items.extend(response['Items'])
+        while 'LastEvaluatedKey' in response:
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+            response = images_table.scan(**scan_kwargs)
+            all_image_items.extend(response['Items'])
+
+        # Build site → sector → periods map
+        periods_map: dict[str, dict[str, set[str]]] = {}
+        for item in all_image_items:
+            site = item.get('site_id', '')
+            sector = item.get('sector_id', '')
+            period = item.get('period', '')
+            if not site or not sector or not period:
+                continue
+            if site not in periods_map:
+                periods_map[site] = {}
+            if sector not in periods_map[site]:
+                periods_map[site][sector] = set()
+            periods_map[site][sector].add(period)
+
+        # Step 3: Build response hierarchy
+        navigation = {}
+        for site in sorted(site_sectors.keys()):
+            sectors = {}
+            for sector in sorted(site_sectors[site]):
+                periods = sorted(
+                    periods_map.get(site, {}).get(sector, set()),
+                    reverse=True  # Most recent first
+                )
+                sectors[sector] = {'periods': periods}
+            navigation[site] = {'sectors': sectors}
+
+        return jsonify(navigation)
+    except Exception as e:
+        logger.error(f"Error fetching navigation: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/sites', methods=['GET'])
 @require_auth
@@ -209,13 +286,29 @@ def get_pads():
 
         # Filter by completeness if period is provided
         if period:
-            logger.info(f"Filtering pads for completeness: {site}/{sector}/{period}")
+            logger.info(f"Filtering pads for completeness: {site}/{sector}/{period} ({len(pads)} pads, max_workers={PAD_COMPLETENESS_MAX_WORKERS})")
+            # Run per-pad checks in parallel; boto3 clients/tables are thread-safe for reads.
+            # Preserve input order and filter semantics: include only pads whose check returns True.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=PAD_COMPLETENESS_MAX_WORKERS) as executor:
+                future_to_pad = {
+                    executor.submit(
+                        mosaic_service.check_pad_completeness,
+                        site, sector, period, pad['pad_id']
+                    ): pad
+                    for pad in pads
+                }
+                # Collect results keyed by pad to preserve original list order below
+                completeness: dict = {}
+                for future in concurrent.futures.as_completed(future_to_pad):
+                    pad = future_to_pad[future]
+                    try:
+                        completeness[pad['pad_id']] = future.result()
+                    except Exception as exc:
+                        logger.warning(f"Completeness check raised for {pad['pad_id']}: {exc}; treating as incomplete")
+                        completeness[pad['pad_id']] = False
             complete_pads = []
             for pad in pads:
-                is_complete = mosaic_service.check_pad_completeness(
-                    site, sector, period, pad['pad_id']
-                )
-                if is_complete:
+                if completeness.get(pad['pad_id'], False):
                     complete_pads.append(pad)
                 else:
                     logger.debug(f"Filtered out incomplete pad: {pad['pad_id']}")
