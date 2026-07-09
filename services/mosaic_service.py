@@ -5,6 +5,7 @@ Handles mosaic data retrieval from S3 and DynamoDB
 
 import json
 import logging
+import re
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ class MosaicService:
         sector: str,
         period: str,
         pad_id: str,
-        mosaic_type: str
+        mosaic_type: str,
+        download: bool = False,
     ) -> str:
         """
         Generate presigned URL for orthomosaic GeoTIFF
@@ -45,19 +47,25 @@ class MosaicService:
             period: Period (YYYYMMDD)
             pad_id: Pad ID
             mosaic_type: Mosaic type (optical, medical, hotspot_alert)
+            download: If True, include Content-Disposition attachment with filename
 
         Returns:
             Presigned S3 URL
         """
         s3_key = f"mosaics/{site}/{sector}/{period}/{pad_id}/{mosaic_type}/viewer/odm_orthophoto.tif"
 
+        params = {
+            'Bucket': self.s3_bucket,
+            'Key': s3_key,
+        }
+        if download:
+            safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', f"{pad_id}_{period}_{mosaic_type}")
+            params['ResponseContentDisposition'] = f'attachment; filename="{safe_name}.tif"'
+
         try:
             url = self.s3.generate_presigned_url(
                 'get_object',
-                Params={
-                    'Bucket': self.s3_bucket,
-                    'Key': s3_key
-                },
+                Params=params,
                 ExpiresIn=3600  # 1 hour
             )
             logger.info(f"Generated orthomosaic URL for {s3_key}")

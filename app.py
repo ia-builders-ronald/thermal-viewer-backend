@@ -360,13 +360,14 @@ def get_orthomosaic_url():
     period = request.args.get('period')
     pad_id = request.args.get('pad_id')
     mosaic_type = request.args.get('mosaic_type', 'optical')
+    download = request.args.get('download', 'false').lower() == 'true'
 
     if not all([site, sector, period, pad_id]):
         return jsonify({'error': 'site, sector, period, and pad_id required'}), 400
 
     try:
         url = mosaic_service.get_orthomosaic_url(
-            site, sector, period, pad_id, mosaic_type
+            site, sector, period, pad_id, mosaic_type, download=download
         )
         return jsonify({'url': url})
     except Exception as e:
