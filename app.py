@@ -34,6 +34,12 @@ PAD_COMPLETENESS_MAX_WORKERS = 16
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend requests
 
+# Single source of truth for the backend version (SemVer). Bump on each
+# shippable change: PATCH = fix, MINOR = feature, MAJOR = breaking. Overridable
+# via the APP_VERSION env var for CI-injected builds. Surfaced on /health and /
+# for ops; see CHANGELOG.md for history.
+APP_VERSION = os.environ.get('APP_VERSION', '1.2.0')
+
 # Configuration from environment variables
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')
 S3_BUCKET = os.environ.get('S3_BUCKET', 'thermal-api-dev-storage-7ecb7171')
@@ -717,7 +723,7 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'service': 'thermal-viewer-backend',
-        'version': '1.0.0'
+        'version': APP_VERSION
     })
 
 
@@ -726,7 +732,7 @@ def root():
     """Root endpoint"""
     return jsonify({
         'service': 'Thermal Viewer Backend API',
-        'version': '1.0.0',
+        'version': APP_VERSION,
         'endpoints': {
             'discovery': [
                 '/api/sites',
