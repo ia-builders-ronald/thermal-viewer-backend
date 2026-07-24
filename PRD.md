@@ -119,7 +119,7 @@ Provide a scalable, secure REST API layer that:
 - **Platform:** Amazon EC2 (t3.medium)
 - **Container:** Docker (Docker Compose orchestration)
 - **Reverse Proxy:** nginx (HTTPS termination, path rewriting)
-- **Domain:** `https://dev-thermal.iabuilders.ai/viewer`
+- **Domain:** `https://dev-thermal.dabuilders.net/viewer`
 
 **Monitoring:**
 - **Health Checks:** `/health` endpoint (30s interval)
@@ -209,7 +209,7 @@ image_service = ImageService(s3_client, S3_BUCKET, images_table)
 
 ### 4.1 Base URL
 
-**Production:** `https://dev-thermal.iabuilders.ai/viewer`
+**Production:** `https://dev-thermal.dabuilders.net/viewer`
 **Local Development:** `http://localhost:5001`
 
 ### 4.2 Common Patterns
@@ -252,7 +252,7 @@ image_service = ImageService(s3_client, S3_BUCKET, images_table)
 
 **Example:**
 ```bash
-curl https://dev-thermal.iabuilders.ai/viewer/health
+curl https://dev-thermal.dabuilders.net/viewer/health
 ```
 
 ---
@@ -314,7 +314,7 @@ curl https://dev-thermal.iabuilders.ai/viewer/health
 
 **Example:**
 ```bash
-curl https://dev-thermal.iabuilders.ai/viewer/api/sites
+curl https://dev-thermal.dabuilders.net/viewer/api/sites
 ```
 
 **Implementation Details:**
@@ -346,7 +346,7 @@ curl https://dev-thermal.iabuilders.ai/viewer/api/sites
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/sectors?site=leyte"
+curl "https://dev-thermal.dabuilders.net/viewer/api/sectors?site=leyte"
 ```
 
 **Implementation Details:**
@@ -383,7 +383,7 @@ curl "https://dev-thermal.iabuilders.ai/viewer/api/sectors?site=leyte"
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/periods?site=leyte&sector=tongonan"
+curl "https://dev-thermal.dabuilders.net/viewer/api/periods?site=leyte&sector=tongonan"
 ```
 
 **Implementation Details:**
@@ -445,10 +445,10 @@ A pad is considered "complete" if the following files exist in S3:
 **Example:**
 ```bash
 # All pads for site/sector
-curl "https://dev-thermal.iabuilders.ai/viewer/api/pads?site=leyte&sector=tongonan"
+curl "https://dev-thermal.dabuilders.net/viewer/api/pads?site=leyte&sector=tongonan"
 
 # Only complete pads for specific period
-curl "https://dev-thermal.iabuilders.ai/viewer/api/pads?site=leyte&sector=tongonan&period=20241230"
+curl "https://dev-thermal.dabuilders.net/viewer/api/pads?site=leyte&sector=tongonan&period=20241230"
 ```
 
 **Implementation Details:**
@@ -495,7 +495,7 @@ curl "https://dev-thermal.iabuilders.ai/viewer/api/pads?site=leyte&sector=tongon
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/mosaic/metadata?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=optical"
+curl "https://dev-thermal.dabuilders.net/viewer/api/mosaic/metadata?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=optical"
 ```
 
 **Implementation Details:**
@@ -541,7 +541,7 @@ mosaics/{site}/{sector}/{period}/{pad_id}/{mosaic_type}/viewer/odm_orthophoto.ti
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/mosaic/orthomosaic?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=medical"
+curl "https://dev-thermal.dabuilders.net/viewer/api/mosaic/orthomosaic?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=medical"
 ```
 
 **Implementation Details:**
@@ -618,7 +618,7 @@ yaw_normalized = yaw_degrees % 360  # Normalize to 0-360
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/mosaic/cameras?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=optical"
+curl "https://dev-thermal.dabuilders.net/viewer/api/mosaic/cameras?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105&mosaic_type=optical"
 ```
 
 **Implementation Details:**
@@ -656,7 +656,7 @@ curl "https://dev-thermal.iabuilders.ai/viewer/api/mosaic/cameras?site=leyte&sec
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/optical/leyte_tongonan_20241230_0379"
+curl "https://dev-thermal.dabuilders.net/viewer/api/optical/leyte_tongonan_20241230_0379"
 ```
 
 **Implementation Details:**
@@ -699,10 +699,10 @@ curl "https://dev-thermal.iabuilders.ai/viewer/api/optical/leyte_tongonan_202412
 **Example:**
 ```bash
 # Medical palette (default)
-curl "https://dev-thermal.iabuilders.ai/viewer/api/thermal/leyte_tongonan_20241230_0379"
+curl "https://dev-thermal.dabuilders.net/viewer/api/thermal/leyte_tongonan_20241230_0379"
 
 # Hotspot alert palette
-curl "https://dev-thermal.iabuilders.ai/viewer/api/thermal/leyte_tongonan_20241230_0379?palette=hotspot_alert"
+curl "https://dev-thermal.dabuilders.net/viewer/api/thermal/leyte_tongonan_20241230_0379?palette=hotspot_alert"
 ```
 
 **Implementation Details:**
@@ -771,7 +771,7 @@ curl "https://dev-thermal.iabuilders.ai/viewer/api/thermal/leyte_tongonan_202412
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/thermal/leyte_tongonan_20241230_0379/stats"
+curl "https://dev-thermal.dabuilders.net/viewer/api/thermal/leyte_tongonan_20241230_0379/stats"
 ```
 
 **Implementation Details:**
@@ -831,7 +831,7 @@ total_area = area_per_image * image_count * 0.4
 
 **Example:**
 ```bash
-curl "https://dev-thermal.iabuilders.ai/viewer/api/coverage/stats?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105"
+curl "https://dev-thermal.dabuilders.net/viewer/api/coverage/stats?site=leyte&sector=tongonan&period=20241230&pad_id=leyte_tongonan_PAD_105"
 ```
 
 **Implementation Details:**
@@ -1258,11 +1258,11 @@ upstream thermal_viewer {
 
 server {
     listen 443 ssl;
-    server_name dev-thermal.iabuilders.ai;
+    server_name dev-thermal.dabuilders.net;
 
     # SSL configuration (managed by Certbot)
-    ssl_certificate /etc/letsencrypt/live/dev-thermal.iabuilders.ai/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/dev-thermal.iabuilders.ai/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/dev-thermal.dabuilders.net/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dev-thermal.dabuilders.net/privkey.pem;
 
     # Viewer backend routes
     location /viewer/api/ {
@@ -1542,7 +1542,7 @@ def decimal_to_float(obj):
 
 **Example:**
 ```bash
-./scripts/test_viewer_backend.sh https://dev-thermal.iabuilders.ai/viewer
+./scripts/test_viewer_backend.sh https://dev-thermal.dabuilders.net/viewer
 ```
 
 ---
@@ -1807,7 +1807,7 @@ docker-compose down
 ```python
 import requests
 
-BASE_URL = "https://dev-thermal.iabuilders.ai/viewer"
+BASE_URL = "https://dev-thermal.dabuilders.net/viewer"
 
 # Get sites
 response = requests.get(f"{BASE_URL}/api/sites")
@@ -1828,7 +1828,7 @@ presigned_url = data['url']
 
 **JavaScript (fetch):**
 ```javascript
-const BASE_URL = 'https://dev-thermal.iabuilders.ai/viewer';
+const BASE_URL = 'https://dev-thermal.dabuilders.net/viewer';
 
 // Get sites
 const response = await fetch(`${BASE_URL}/api/sites`);
@@ -1849,10 +1849,10 @@ const geojson = await cameraResponse.json();
 **cURL:**
 ```bash
 # Get sites
-curl https://dev-thermal.iabuilders.ai/viewer/api/sites
+curl https://dev-thermal.dabuilders.net/viewer/api/sites
 
 # Get thermal stats
-curl "https://dev-thermal.iabuilders.ai/viewer/api/thermal/leyte_tongonan_20241230_0379/stats"
+curl "https://dev-thermal.dabuilders.net/viewer/api/thermal/leyte_tongonan_20241230_0379/stats"
 ```
 
 ---

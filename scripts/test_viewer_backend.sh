@@ -8,7 +8,7 @@ set -euo pipefail
 # Usage: ./scripts/test_viewer_backend.sh
 # ==============================================================================
 
-BASE_URL="${BASE_URL:-https://dev-thermal.iabuilders.ai/viewer}"
+BASE_URL="${BASE_URL:-https://dev-thermal.dabuilders.net/viewer}"
 VERBOSE="${VERBOSE:-false}"
 
 # Colors for output

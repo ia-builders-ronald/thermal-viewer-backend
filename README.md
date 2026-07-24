@@ -336,13 +336,13 @@ See `TEST_PLAN.md` for detailed test documentation.
 
 ```bash
 # Health check
-curl https://dev-thermal.iabuilders.ai/viewer/health
+curl https://dev-thermal.dabuilders.net/viewer/health
 
 # Get sites
-curl https://dev-thermal.iabuilders.ai/viewer/api/sites
+curl https://dev-thermal.dabuilders.net/viewer/api/sites
 
 # Get mosaic metadata
-curl "https://dev-thermal.iabuilders.ai/viewer/api/mosaic/metadata?site=leyte&sector=mahanagdong-b&period=20241230&pad_id=leyte_mahanagdong-b_PAD_mgdl&mosaic_type=optical"
+curl "https://dev-thermal.dabuilders.net/viewer/api/mosaic/metadata?site=leyte&sector=mahanagdong-b&period=20241230&pad_id=leyte_mahanagdong-b_PAD_mgdl&mosaic_type=optical"
 ```
 
 ## Deployment
@@ -405,8 +405,8 @@ location /viewer/health {
 **4. Verify Deployment**:
 ```bash
 # Health check
-curl https://dev-thermal.iabuilders.ai/viewer/health
+curl https://dev-thermal.dabuilders.net/viewer/health
 
 # Test API endpoint
-curl https://dev-thermal.iabuilders.ai/viewer/api/sites
+curl https://dev-thermal.dabuilders.net/viewer/api/sites
 ```

@@ -4,7 +4,7 @@
 Comprehensive validation of all viewer backend endpoints to ensure proper data retrieval, S3 presigned URLs, and error handling.
 
 ## Test Environment
-- **Base URL**: https://dev-thermal.iabuilders.ai/viewer
+- **Base URL**: https://dev-thermal.dabuilders.net/viewer
 - **Backend Port**: 5001
 - **AWS Region**: ap-southeast-1
 - **DynamoDB Tables**: thermal-api-dev-{images,jobs,pads}-7ecb7171
