@@ -11,26 +11,45 @@ set -uo pipefail
 #
 # Environment overrides:
 #   BASE_URL       viewer API root      (default: https://dev-thermal.dabuilders.net/viewer)
-#   SITE / SECTOR  hierarchy to test    (default: leyte / mahanagdong-b)
+#   SITE / SECTOR  hierarchy to test    (default: auto-discovered from the API)
 #   PERIOD         pin a period         (default: auto-discovered — see below)
 #   PAD_ID         pin a pad            (default: first pad of the chosen period)
 #   IMAGES_TABLE   DynamoDB table       (default: thermal-api-dev-images-7ecb7171)
 #   AWS_REGION     region               (default: ap-southeast-1)
+#   AWS_PROFILE    read natively by the AWS CLI for the DynamoDB lookup
+#   AUTH_TOKEN     Cognito session token, sent as `Authorization: Bearer <token>`
 #   VERBOSE=true   print URLs + bodies
 #
-# Period/pad selection: periods and pads are NOT independent — a period can exist
-# while having zero pads. The suite therefore walks the period list and picks the
-# first period that actually has pads, then takes a pad from THAT period. Pinning
-# an unrelated PERIOD/PAD_ID pair produces spurious NoSuchKey failures.
+# Auth: this backend bypasses auth entirely when COGNITO_USER_POOL_ID /
+# COGNITO_CLIENT_ID are unset (the DEV deployment), so AUTH_TOKEN is optional
+# here. Against an auth-enabled deployment (EDC), every data endpoint is
+# @require_auth and will 401 without it. The suite probes for that up front and
+# stops with an explanation rather than reporting ~30 auth errors as product
+# failures.
+#
+# Hierarchy selection: the levels are NOT independent — a sector can have periods
+# with zero pads. The suite therefore walks sector × period until it finds a
+# combination that actually has pads, then takes a pad from THAT combination.
+# Nothing is hardcoded, so this runs unmodified against any deployment. Pinning an
+# unrelated PERIOD/PAD_ID pair produces spurious NoSuchKey failures, so the pair is
+# always resolved together.
 # ==============================================================================
 
 BASE_URL="${1:-${BASE_URL:-https://dev-thermal.dabuilders.net/viewer}}"
 VERBOSE="${VERBOSE:-false}"
-SITE="${SITE:-leyte}"
-SECTOR="${SECTOR:-mahanagdong-b}"
+SITE="${SITE:-}"
+SECTOR="${SECTOR:-}"
 IMAGES_TABLE="${IMAGES_TABLE:-thermal-api-dev-images-7ecb7171}"
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
+AUTH_TOKEN="${AUTH_TOKEN:-}"
+
+# Built once and expanded safely on bash 3.2 (macOS), where "${arr[@]}" on an
+# empty array trips `set -u`.
+CURL_AUTH=()
+if [ -n "$AUTH_TOKEN" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer $AUTH_TOKEN")
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -102,33 +121,51 @@ test_endpoint() {
         echo "  URL: $url"
     fi
 
+    # Truncate first: on a timeout or connection failure curl writes nothing, and
+    # a leftover body from the PREVIOUS request would otherwise be printed as if
+    # it were this response.
+    : > "$RESPONSE_FILE"
+
     local http_code
-    http_code=$(curl -s --max-time "$CURL_TIMEOUT" -o "$RESPONSE_FILE" -w "%{http_code}" "$url")
+    http_code=$(curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} -o "$RESPONSE_FILE" -w "%{http_code}" "$url")
+
+    # Retry ONCE on 000 only (timeout / DNS / TLS / connection reset). Never retry
+    # a real HTTP status — that would mask genuine failures.
+    if [ "$http_code" = "000" ]; then
+        sleep 2
+        : > "$RESPONSE_FILE"
+        http_code=$(curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} -o "$RESPONSE_FILE" -w "%{http_code}" "$url")
+    fi
 
     if [ "$http_code" = "$expected_status" ]; then
         print_pass "$name (HTTP $http_code)"
 
-        if [ "$VERBOSE" = "true" ] && [ -f "$RESPONSE_FILE" ]; then
+        if [ "$VERBOSE" = "true" ] && [ -s "$RESPONSE_FILE" ]; then
             echo "  Response:"
             jq '.' "$RESPONSE_FILE" 2>/dev/null || cat "$RESPONSE_FILE"
         fi
 
         return 0
-    else
-        print_fail "$name (HTTP $http_code, expected $expected_status)"
+    fi
 
-        if [ -f "$RESPONSE_FILE" ]; then
-            echo "  Response:"
-            head -c 400 "$RESPONSE_FILE"; echo
-        fi
-
+    # curl reports 000 for timeout / DNS / TLS / connection failures — there is no
+    # HTTP status at all, so say that rather than "expected 200".
+    if [ "$http_code" = "000" ]; then
+        print_fail "$name (no response — timed out after ${CURL_TIMEOUT}s, or connection/TLS failure)"
         return 1
     fi
+
+    print_fail "$name (HTTP $http_code, expected $expected_status)"
+    if [ -s "$RESPONSE_FILE" ]; then
+        echo "  Response:"
+        head -c 400 "$RESPONSE_FILE"; echo
+    fi
+    return 1
 }
 
 # GET a URL and echo the body (does not count as a test)
 fetch() {
-    curl -s --max-time "$CURL_TIMEOUT" "$1"
+    curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} "$1"
 }
 
 extract_json_value() {
@@ -167,6 +204,35 @@ echo ""
 
 command -v jq >/dev/null 2>&1 || { echo -e "${RED}jq is required but not installed.${NC}"; exit 2; }
 
+# ------------------------------------------------------------------------------
+# Reachability preflight — distinguish "the app is broken" from "something in
+# front of the app blocked us". Without this, a Cloudflare bot challenge shows up
+# as a wall of HTTP 403s that look like application failures.
+# ------------------------------------------------------------------------------
+HEADER_FILE="$(mktemp -t viewer_test_headers.XXXXXX)"
+trap 'rm -f "$RESPONSE_FILE" "$HEADER_FILE"' EXIT
+
+curl -s -D "$HEADER_FILE" -o "$RESPONSE_FILE" --max-time "$CURL_TIMEOUT" \
+    ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} "$BASE_URL/health" >/dev/null 2>&1
+
+if grep -qi '^cf-mitigated:' "$HEADER_FILE" 2>/dev/null || \
+   grep -qi 'Just a moment' "$RESPONSE_FILE" 2>/dev/null; then
+    echo ""
+    echo -e "${RED}Blocked by Cloudflare bot protection — not an application failure.${NC}"
+    echo "Cloudflare returned a JS challenge (cf-mitigated: challenge), which curl"
+    echo "cannot solve. A browser User-Agent does not help."
+    echo ""
+    echo "Run the suite ON the backend host, against the container directly:"
+    echo ""
+    echo "  ssh edc-thermal-web"
+    echo "  BASE_URL=http://localhost:5001 ./test_viewer_backend.sh"
+    echo ""
+    echo "That bypasses Cloudflare entirely. Add AUTH_TOKEN=... if the deployment"
+    echo "has Cognito enabled."
+    echo ""
+    exit 2
+fi
+
 # ==============================================================================
 # 1. Health Check
 # ==============================================================================
@@ -179,69 +245,128 @@ status=$(extract_json_value '.status')
 [ "$status" = "healthy" ]
 assert "Service status is healthy (got: ${status:-<none>})" $?
 
+# ------------------------------------------------------------------------------
+# Auth probe — fail fast with one clear message rather than ~30 auth errors
+# masquerading as product failures. /health is auth-free, so this is the first
+# call that can reveal an auth requirement.
+# ------------------------------------------------------------------------------
+probe_code=$(curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} \
+    -o /dev/null -w "%{http_code}" "$BASE_URL/api/sites")
+
+if [ "$probe_code" = "401" ] || [ "$probe_code" = "403" ]; then
+    echo ""
+    if [ -z "$AUTH_TOKEN" ]; then
+        echo -e "${RED}This deployment requires authentication (HTTP $probe_code on /api/sites).${NC}"
+        echo "Every data endpoint is @require_auth. Re-run with a Cognito session token:"
+        echo ""
+        echo "  AUTH_TOKEN='<session token>' $0 $BASE_URL"
+        echo ""
+        echo "Grab one from the browser devtools on a logged-in session (the app sends it"
+        echo "as an Authorization: Bearer header, or as ?api_key= on older builds)."
+    else
+        echo -e "${RED}AUTH_TOKEN was supplied but rejected (HTTP $probe_code).${NC}"
+        echo "The token is probably expired — Cognito session tokens are short-lived."
+    fi
+    echo ""
+    exit 2
+fi
+
 # ==============================================================================
 # 2. Data Discovery
 # ==============================================================================
 
 print_header "2. Data Discovery"
 
+# Everything below is discovered from the API rather than hardcoded, so this
+# script runs unmodified against any deployment. Each level can still be pinned
+# via SITE / SECTOR / PERIOD / PAD_ID for targeted debugging.
+
 # 2.1 Sites
 test_endpoint "Get Sites" "$BASE_URL/api/sites"
-jq -e --arg site "$SITE" 'index($site)' "$RESPONSE_FILE" >/dev/null 2>&1
-assert "Site '$SITE' present in /api/sites" $?
+SITES=$(jq -r '.[]?' "$RESPONSE_FILE" 2>/dev/null)
 
-# 2.2 Sectors
-test_endpoint "Get Sectors for $SITE" "$BASE_URL/api/sectors?site=$SITE"
-jq -e --arg sector "$SECTOR" 'index($sector)' "$RESPONSE_FILE" >/dev/null 2>&1
-assert "Sector '$SECTOR' present in /api/sectors" $?
-
-# 2.3 Periods
-test_endpoint "Get Periods for $SITE/$SECTOR" "$BASE_URL/api/periods?site=$SITE&sector=$SECTOR"
-PERIODS=$(jq -r '.[]?' "$RESPONSE_FILE" 2>/dev/null)
-
-if [ -z "$PERIODS" ]; then
-    print_fail "No periods returned for $SITE/$SECTOR — cannot continue"
+if [ -z "$SITES" ]; then
+    print_fail "No sites returned — cannot continue"
     ((TOTAL_TESTS+=1))
     print_summary_and_exit
 fi
 
-# 2.4 Pick a period that ACTUALLY HAS PADS, then a pad from that same period.
-#     (A period existing does not imply it has pads — pinning a mismatched
-#      period/pad pair is what produced spurious NoSuchKey 500s previously.)
+if [ -n "$SITE" ]; then
+    jq -e --arg site "$SITE" 'index($site)' "$RESPONSE_FILE" >/dev/null 2>&1
+    assert "Pinned site '$SITE' present in /api/sites" $?
+else
+    SITE=$(echo "$SITES" | head -1)
+    print_info "Auto-selected site: $SITE"
+fi
+
+# 2.2 Sectors
+test_endpoint "Get Sectors for $SITE" "$BASE_URL/api/sectors?site=$SITE"
+SECTORS=$(jq -r '.[]?' "$RESPONSE_FILE" 2>/dev/null)
+
+if [ -z "$SECTORS" ]; then
+    print_fail "No sectors returned for site '$SITE' — cannot continue"
+    ((TOTAL_TESTS+=1))
+    print_summary_and_exit
+fi
+
+if [ -n "$SECTOR" ]; then
+    jq -e --arg sector "$SECTOR" 'index($sector)' "$RESPONSE_FILE" >/dev/null 2>&1
+    assert "Pinned sector '$SECTOR' present in /api/sectors" $?
+    SECTORS="$SECTOR"
+fi
+
+# 2.2b Periods endpoint — asserted explicitly here, because the discovery loop
+#      below fetches periods via `fetch` (which intentionally does not count as
+#      a test). Without this the endpoint would go entirely unasserted.
+FIRST_SECTOR=$(echo "$SECTORS" | head -1)
+test_endpoint "Get Periods for $SITE/$FIRST_SECTOR" \
+    "$BASE_URL/api/periods?site=$SITE&sector=$FIRST_SECTOR"
+jq -e 'type == "array"' "$RESPONSE_FILE" >/dev/null 2>&1
+assert "Periods response is a JSON array" $?
+
+# 2.3 Find a sector/period that ACTUALLY HAS PADS, then a pad from that period.
+#     Levels are NOT independent: a sector can have periods with zero pads.
+#     Testing a mismatched period/pad pair is what produced spurious NoSuchKey
+#     500s previously, so the pair is always resolved together.
 PERIOD="${PERIOD:-}"
 PAD_ID="${PAD_ID:-}"
+PADS_JSON="[]"
 
 if [ -n "$PERIOD" ] && [ -n "$PAD_ID" ]; then
-    print_info "Using pinned period/pad from environment: $PERIOD / $PAD_ID"
+    SECTOR="${SECTOR:-$(echo "$SECTORS" | head -1)}"
+    print_info "Using pinned sector/period/pad: $SECTOR / $PERIOD / $PAD_ID"
     PADS_JSON=$(fetch "$BASE_URL/api/pads?site=$SITE&sector=$SECTOR&period=$PERIOD")
 else
-    print_info "Auto-discovering a period that has pads..."
-    PERIOD=""
-    PADS_JSON="[]"
-    for candidate in $PERIODS; do
-        body=$(fetch "$BASE_URL/api/pads?site=$SITE&sector=$SECTOR&period=$candidate")
-        count=$(echo "$body" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)
-        printf '    period %-22s pads=%s\n' "$candidate" "${count:-0}"
-        if [ "${count:-0}" -gt 0 ]; then
-            PERIOD="$candidate"
-            PADS_JSON="$body"
-            break
-        fi
+    print_info "Searching for a sector/period combination that has pads..."
+    FOUND=""
+    for sec in $SECTORS; do
+        periods=$(fetch "$BASE_URL/api/periods?site=$SITE&sector=$sec" | jq -r '.[]?' 2>/dev/null)
+        for per in $periods; do
+            body=$(fetch "$BASE_URL/api/pads?site=$SITE&sector=$sec&period=$per")
+            count=$(echo "$body" | jq 'if type=="array" then length else 0 end' 2>/dev/null || echo 0)
+            printf '    %-20s %-22s pads=%s\n' "$sec" "$per" "${count:-0}"
+            if [ "${count:-0}" -gt 0 ]; then
+                SECTOR="$sec"; PERIOD="$per"; PADS_JSON="$body"; FOUND="yes"
+                break
+            fi
+        done
+        [ -n "$FOUND" ] && break
     done
 
-    if [ -z "$PERIOD" ]; then
-        print_fail "No period under $SITE/$SECTOR has any pads — cannot test mosaics"
+    if [ -z "$FOUND" ]; then
+        print_fail "No sector/period under site '$SITE' has any pads — cannot test mosaics"
         ((TOTAL_TESTS+=1))
         print_summary_and_exit
     fi
     PAD_ID=$(echo "$PADS_JSON" | jq -r '.[0].pad_id')
 fi
 
+print_info "Using sector: $SECTOR"
 print_info "Using period: $PERIOD"
 print_info "Using pad:    $PAD_ID"
 
 echo "$PADS_JSON" | jq -e --arg pad_id "$PAD_ID" '.[] | select(.pad_id == $pad_id)' >/dev/null 2>&1
-assert "Pad '$PAD_ID' present in pads for period '$PERIOD'" $?
+assert "Pad '$PAD_ID' present in pads for $SECTOR/$PERIOD" $?
 
 # ==============================================================================
 # 3. Mosaic Endpoints
@@ -347,7 +472,7 @@ test_endpoint "Missing required params" "$BASE_URL/api/mosaic/metadata?site=$SIT
 # An unknown image id may legitimately be 404 or 500 depending on the backend
 print_test "Invalid image ID (accepts 404 or 500)"
 ((TOTAL_TESTS+=1))
-bad_code=$(curl -s --max-time "$CURL_TIMEOUT" -o "$RESPONSE_FILE" -w "%{http_code}" \
+bad_code=$(curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} -o "$RESPONSE_FILE" -w "%{http_code}" \
     "$BASE_URL/api/optical/nonexistent-image-id")
 if [ "$bad_code" = "404" ] || [ "$bad_code" = "500" ]; then
     print_pass "Invalid image ID rejected (HTTP $bad_code)"
