@@ -41,9 +41,10 @@ Ops-facing version, surfaced on `GET /health` and `/`. The DEV backend runs
 | **1.0.0** | 2025-11 | Initial read-only API: hierarchical discovery, mosaic metadata + presigned orthomosaic URLs, camera positions, optical/thermal image URLs, thermal temperature stats, `/health`. | reconstructed |
 | **1.1.0** | 2026-06-11 | Parallelized the per-pad completeness check (ThreadPoolExecutor). | reconstructed |
 | **1.2.0** | 2026-07-24 | `download` flag on `/api/mosaic/orthomosaic` (S3 `ResponseContentDisposition` filename); single-source `APP_VERSION` on `/health` + `/`. | ✅ |
+| **1.3.0** | 2026-08-26 | `GET /api/navigation` adds a per-sector `pads` map (pad_id → pad_name, geo_location_area, periods with imagery) enabling a pad-first filter order without extra API calls. | ✅ |
 
 ## Current DEV versions
-- Frontend: **1.10.0** · Backend: **1.2.0**
+- Frontend: **1.10.0** · Backend: **1.3.0**
 
 ## Updating (each DEV release)
 1. Bump `package.json` (frontend) / `APP_VERSION` (backend) + add the `CHANGELOG.md` entry, commit, `git tag -a vX.Y.Z`, push branch + tag (per `VERSIONING.md`).

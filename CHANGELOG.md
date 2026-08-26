@@ -12,6 +12,17 @@ The backend versions independently from the frontend — they deploy separately
 (Amplify vs ECR/EC2), so their numbers need not match. `1.1.0` is reconstructed
 from history; tagging began at `1.2.0`.
 
+## [1.3.0] — 2026-08-26
+### Added
+- `GET /api/navigation` now returns a per-sector `pads` map (keyed by `pad_id`,
+  with `pad_name`, `geo_location_area`, and the sorted-descending list of
+  `periods` that pad actually has imagery for) alongside the existing
+  `periods` list, so the frontend can offer a pad-first filter order
+  (Site → Sector → Pad → Period) without any additional per-selection API
+  calls. Pads with no imagery in any period are omitted; the pads table
+  remains the authoritative pad list. Existing `periods` output is unchanged
+  (backward compatible).
+
 ## [1.2.0] — 2026-07-24
 ### Added
 - `download` flag on `GET /api/mosaic/orthomosaic` — sets the S3

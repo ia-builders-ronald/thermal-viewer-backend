@@ -38,7 +38,7 @@ CORS(app)  # Enable CORS for frontend requests
 # shippable change: PATCH = fix, MINOR = feature, MAJOR = breaking. Overridable
 # via the APP_VERSION env var for CI-injected builds. Surfaced on /health and /
 # for ops; see CHANGELOG.md for history.
-APP_VERSION = os.environ.get('APP_VERSION', '1.2.0')
+APP_VERSION = os.environ.get('APP_VERSION', '1.3.0')
 
 # Configuration from environment variables
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')
@@ -87,12 +87,14 @@ def decimal_to_float(obj):
 @app.route('/api/navigation', methods=['GET'])
 @require_auth
 def get_navigation():
-    """Get full site → sector → periods hierarchy in one call for preloading dropdowns"""
+    """Get full site → sector → periods (+ pads) hierarchy in one call for preloading dropdowns"""
     try:
-        # Step 1: Scan pads table for all site/sector pairs
+        # Step 1: Scan pads table for all site/sector pairs, plus pad identity/geo.
+        # The pads table is period-independent (one row per pad per sector) and is
+        # the authoritative source for the pad list.
         all_pad_items = []
         scan_kwargs = {
-            'ProjectionExpression': '#site, #sector',
+            'ProjectionExpression': '#site, #sector, pad_id, pad_name, geo_location_area',
             'FilterExpression': 'attribute_exists(#site) AND attribute_exists(#sector)',
             'ExpressionAttributeNames': {'#site': 'site', '#sector': 'sector'}
         }
@@ -103,8 +105,9 @@ def get_navigation():
             response = pads_table.scan(**scan_kwargs)
             all_pad_items.extend(response['Items'])
 
-        # Build site → sectors map
+        # Build site → sectors map, and (site, sector) → pads map
         site_sectors: dict[str, set[str]] = {}
+        sector_pads: dict[tuple[str, str], dict[str, dict]] = {}
         for item in all_pad_items:
             site = item['site']
             sector = item['sector']
@@ -112,10 +115,21 @@ def get_navigation():
                 site_sectors[site] = set()
             site_sectors[site].add(sector)
 
-        # Step 2: Scan images table for all site/sector/period combinations
+            pad_id = item.get('pad_id')
+            if not pad_id:
+                continue
+            key = (site, sector)
+            if key not in sector_pads:
+                sector_pads[key] = {}
+            sector_pads[key][pad_id] = {
+                'pad_name': item.get('pad_name', pad_id.split('_PAD_')[-1]),
+                'geo_location_area': decimal_to_float(item.get('geo_location_area', [])),
+            }
+
+        # Step 2: Scan images table for all site/sector/period/pad combinations
         all_image_items = []
         scan_kwargs = {
-            'ProjectionExpression': 'site_id, sector_id, period',
+            'ProjectionExpression': 'site_id, sector_id, period, pad_id',
             'FilterExpression': 'attribute_exists(site_id) AND attribute_exists(period)'
         }
         response = images_table.scan(**scan_kwargs)
@@ -125,8 +139,9 @@ def get_navigation():
             response = images_table.scan(**scan_kwargs)
             all_image_items.extend(response['Items'])
 
-        # Build site → sector → periods map
+        # Build site → sector → periods map, and (site, sector, pad_id) → periods map
         periods_map: dict[str, dict[str, set[str]]] = {}
+        pad_periods_map: dict[tuple[str, str, str], set[str]] = {}
         for item in all_image_items:
             site = item.get('site_id', '')
             sector = item.get('sector_id', '')
@@ -139,6 +154,14 @@ def get_navigation():
                 periods_map[site][sector] = set()
             periods_map[site][sector].add(period)
 
+            pad_id = item.get('pad_id', '')
+            if not pad_id:
+                continue
+            pad_key = (site, sector, pad_id)
+            if pad_key not in pad_periods_map:
+                pad_periods_map[pad_key] = set()
+            pad_periods_map[pad_key].add(period)
+
         # Step 3: Build response hierarchy
         navigation = {}
         for site in sorted(site_sectors.keys()):
@@ -148,7 +171,25 @@ def get_navigation():
                     periods_map.get(site, {}).get(sector, set()),
                     reverse=True  # Most recent first
                 )
-                sectors[sector] = {'periods': periods}
+
+                pads = {}
+                for pad_id, pad_info in sector_pads.get((site, sector), {}).items():
+                    pad_periods = sorted(
+                        pad_periods_map.get((site, sector, pad_id), set()),
+                        reverse=True  # Most recent first
+                    )
+                    if not pad_periods:
+                        # Exclude pads with no imagery for any period - nothing to view
+                        continue
+                    pads[pad_id] = {
+                        'pad_name': pad_info['pad_name'],
+                        'geo_location_area': pad_info['geo_location_area'],
+                        'periods': pad_periods,
+                    }
+                # Sort pads by pad_name for stable output
+                pads = dict(sorted(pads.items(), key=lambda kv: kv[1]['pad_name']))
+
+                sectors[sector] = {'periods': periods, 'pads': pads}
             navigation[site] = {'sectors': sectors}
 
         return jsonify(navigation)
