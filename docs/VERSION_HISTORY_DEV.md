@@ -30,6 +30,9 @@ history + the support log and are not git-tagged.
 | **1.9.1** | 2026-08-13 | Merged the two loading indicators (fetch spinner + map raster box) into one overlay. | ✅ |
 | **1.9.2** | 2026-08-13 | Fixed loading-overlay flicker across load phases (busy signal covers the tile render; hide debounced). | ✅ |
 | **1.10.0** | 2026-08-13 | Frosted-glass styling for floating map surfaces (Map Controls, Pipe Measurements, measurements list, loading overlay = light glass; zoom badge + camera tooltip = dark glass). | ✅ |
+| **1.11.0** | 2026-08-26 | Pad-first filter reorder: Site → Sector → Pad → Period (was …→Period→Pad). Period list is now per-pad (only periods that pad has imagery for), derived from the preloaded `/api/navigation` tree with no per-selection calls; selecting a pad auto-selects its most-recent period. Requires backend 1.3.0. | ✅ |
+| **1.12.0** | 2026-08-26 | **Beta (DEV only):** map landing view — a Classic/Map toggle switches to a satellite map where pads for a chosen site+period are drawn as clickable footprints (colored by sector, labeled by pad name) that hand off to the classic detail viewer. Purely additive; classic dropdown flow unchanged. | ✅ |
+| **2.0.0** | 2026-11-09 | **Flight Strip redesign.** New film-black top bar, swappable brand layer and design tokens; numbered frames grouped into flights, contact strip, frame inspector, unified map tool stack, tablet layout; site and sector map depths with the Site › Period › Sector › Pad path; Classic \| New flow switch (default New); restyled report (Pad and Length). | ✅ |
 
 ## Backend (`backend/`)
 
@@ -44,7 +47,7 @@ Ops-facing version, surfaced on `GET /health` and `/`. The DEV backend runs
 | **1.3.0** | 2026-08-26 | `GET /api/navigation` adds a per-sector `pads` map (pad_id → pad_name, geo_location_area, periods with imagery) enabling a pad-first filter order without extra API calls. | ✅ |
 
 ## Current DEV versions
-- Frontend: **1.10.0** · Backend: **1.3.0**
+- Frontend: **2.0.0** · Backend: **1.3.0**
 
 ## Updating (each DEV release)
 1. Bump `package.json` (frontend) / `APP_VERSION` (backend) + add the `CHANGELOG.md` entry, commit, `git tag -a vX.Y.Z`, push branch + tag (per `VERSIONING.md`).
