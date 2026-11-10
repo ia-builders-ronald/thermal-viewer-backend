@@ -43,10 +43,11 @@ class UserStore:
     def get(self, sub: str) -> Optional[dict]:
         hit = self._cache.get(sub)
         if hit and self._clock() - hit[0] < self._cache_seconds:
-            return hit[1]
+            return dict(hit[1])
         item = self._table.get_item(Key={"sub": sub}).get("Item")
         if item is not None:
             self._cache[sub] = (self._clock(), item)
+            return dict(item)
         else:
             self._cache.pop(sub, None)
         return item
@@ -89,16 +90,22 @@ class UserStore:
         if name:
             sets.append("#n = :n")
             values[":n"] = name
-        kwargs = {}
+        names = {"#s": "sub"}
         if name:
-            kwargs["ExpressionAttributeNames"] = {"#n": "name"}
-        resp = self._table.update_item(
-            Key={"sub": sub},
-            UpdateExpression="SET " + ", ".join(sets),
-            ExpressionAttributeValues=values,
-            ReturnValues="ALL_NEW",
-            **kwargs,
-        )
+            names["#n"] = "name"
+        try:
+            resp = self._table.update_item(
+                Key={"sub": sub},
+                UpdateExpression="SET " + ", ".join(sets),
+                ConditionExpression="attribute_exists(#s)",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ReturnValues="ALL_NEW",
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise KeyError(sub)
+            raise
         self.invalidate(sub)
         return resp["Attributes"]
 

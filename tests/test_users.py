@@ -128,3 +128,16 @@ def test_count_admins_excludes_blocked(store):
     store.update("b", role="admin", blocked=True, updated_by="x")
     assert store.count_admins() == 1
     assert store.count_admins(exclude_blocked=False) == 2
+
+
+def test_record_sign_in_unknown_sub_raises_and_creates_nothing(store, table):
+    with pytest.raises(KeyError):
+        store.record_sign_in("ghost", email="g@x.com")
+    assert "Item" not in table.get_item(Key={"sub": "ghost"})
+
+
+def test_get_returns_copy_not_cached_reference(store):
+    store.get_or_create("s1", "u1")
+    first = store.get("s1")
+    first["role"] = "admin"
+    assert store.get("s1")["role"] == "viewer"
