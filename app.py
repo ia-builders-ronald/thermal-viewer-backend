@@ -147,11 +147,21 @@ def admin_update_user(sub):
     except KeyError:
         return _admin_error('User not found.', 'not_found', 404)
 
-    if blocked is not None and blocked != old_blocked:
+    # blocked:false always re-enables (idempotent) to repair any Cognito/table drift.
+    if blocked is True and not old_blocked or blocked is False:
         try:
-            cognito.disable(old['username']) if blocked else cognito.enable(old['username'])
+            if blocked:
+                cognito.disable(old['username'])
+            else:
+                cognito.enable(old['username'])
         except Exception as e:
             logger.error(f"Cognito update failed for {sub}: {e}")
+            if blocked:
+                # disable may have succeeded before sign-out failed: best-effort undo
+                try:
+                    cognito.enable(old['username'])
+                except Exception as undo_error:
+                    logger.error(f"Cognito undo-disable failed for {sub}: {undo_error}")
             try:
                 store.update(sub, role=old_role, blocked=old_blocked, updated_by=actor)
             except Exception as rollback_error:

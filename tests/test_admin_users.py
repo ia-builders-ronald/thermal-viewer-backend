@@ -154,3 +154,45 @@ def test_change_is_logged(env, caplog):
         env.client.patch(f"/api/admin/users/{VIEWER}", json={"role": "monitor"}, headers=env.admin)
     assert (f"admin_change actor={ADMIN} target={VIEWER} role=viewer->monitor "
             "blocked=False->False") in caplog.text
+
+
+class RecordingClient:
+    def __init__(self, fail_sign_out=False):
+        self.calls = []
+        self.fail_sign_out = fail_sign_out
+
+    def admin_disable_user(self, **kw):
+        self.calls.append("disable")
+
+    def admin_user_global_sign_out(self, **kw):
+        self.calls.append("sign_out")
+        if self.fail_sign_out:
+            raise RuntimeError("sign-out failed")
+
+    def admin_enable_user(self, **kw):
+        self.calls.append("enable")
+
+
+def test_block_calls_disable_then_sign_out(env):
+    client = RecordingClient()
+    env.ext["cognito_admin"] = CognitoAdmin(client, env.pool_id)
+    r = env.client.patch(f"/api/admin/users/{VIEWER}", json={"blocked": True}, headers=env.admin)
+    assert r.status_code == 200
+    assert client.calls == ["disable", "sign_out"]
+
+
+def test_partial_cognito_failure_undoes_disable_and_rolls_back(env):
+    client = RecordingClient(fail_sign_out=True)
+    env.ext["cognito_admin"] = CognitoAdmin(client, env.pool_id)
+    r = env.client.patch(f"/api/admin/users/{VIEWER}", json={"blocked": True}, headers=env.admin)
+    assert r.status_code == 502 and r.get_json()["code"] == "cognito"
+    assert row(env, VIEWER)["blocked"] is False
+    assert client.calls == ["disable", "sign_out", "enable"]
+
+
+def test_unblock_always_calls_enable_even_if_row_unblocked(env):
+    client = RecordingClient()
+    env.ext["cognito_admin"] = CognitoAdmin(client, env.pool_id)
+    r = env.client.patch(f"/api/admin/users/{VIEWER}", json={"blocked": False}, headers=env.admin)
+    assert r.status_code == 200
+    assert client.calls == ["enable"]
