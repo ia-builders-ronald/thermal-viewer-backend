@@ -1,226 +1,196 @@
 """
-Cognito JWT Authentication Middleware
+Cognito access-token authentication.
 
-Validates JWT tokens from AWS Cognito User Pool.
+Accepts Cognito *access* tokens only (token_use == "access", client_id matching
+the configured app client). Configuration is read from the environment and the
+app fails closed when it is incomplete: there is no auth-off switch.
 """
 
 import os
 import json
 import time
 import logging
+from dataclasses import dataclass
 from functools import wraps
+from typing import Optional
+
 from flask import request, jsonify, g
 import jwt
 import requests
 
 logger = logging.getLogger(__name__)
 
-# Configuration from environment variables
-COGNITO_REGION = os.environ.get('COGNITO_REGION', 'ap-southeast-1')
-COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
-
-# Cache for JWKS (JSON Web Key Set)
-_jwks_cache = {
-    'keys': None,
-    'last_updated': 0
-}
 JWKS_CACHE_TTL = 3600  # 1 hour
 
-
-def get_jwks_url():
-    """Get the JWKS URL for the Cognito User Pool"""
-    return f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
+_REQUIRED_ENV = ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_DOMAIN", "USERS_TABLE")
 
 
-def get_issuer():
-    """Get the expected issuer for the Cognito User Pool"""
-    return f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"
+class TokenError(Exception):
+    """Raised when a token fails validation."""
 
 
-def fetch_jwks():
-    """Fetch JWKS from Cognito, with caching"""
-    global _jwks_cache
+@dataclass(frozen=True)
+class AuthConfig:
+    region: str
+    user_pool_id: str
+    client_id: str
+    domain: str  # bare hostname, no scheme
+    users_table: str
 
-    current_time = time.time()
+    @classmethod
+    def from_env(cls) -> "AuthConfig":
+        missing = [name for name in _REQUIRED_ENV if not os.environ.get(name)]
+        if missing:
+            raise RuntimeError(
+                "Missing required auth configuration: " + ", ".join(missing)
+            )
+        return cls(
+            region=os.environ.get("COGNITO_REGION") or "ap-southeast-1",
+            user_pool_id=os.environ["COGNITO_USER_POOL_ID"],
+            client_id=os.environ["COGNITO_CLIENT_ID"],
+            domain=os.environ["COGNITO_DOMAIN"],
+            users_table=os.environ["USERS_TABLE"],
+        )
 
-    # Return cached keys if still valid
-    if _jwks_cache['keys'] and (current_time - _jwks_cache['last_updated']) < JWKS_CACHE_TTL:
+    @property
+    def issuer(self) -> str:
+        return f"https://cognito-idp.{self.region}.amazonaws.com/{self.user_pool_id}"
+
+    @property
+    def jwks_url(self) -> str:
+        return f"{self.issuer}/.well-known/jwks.json"
+
+    @property
+    def userinfo_url(self) -> str:
+        return f"https://{self.domain}/oauth2/userInfo"
+
+
+# Cache for JWKS (JSON Web Key Set), keyed by kid
+_jwks_cache = {'keys': None, 'last_updated': 0}
+
+
+def fetch_jwks(config: AuthConfig, force: bool = False):
+    """Fetch JWKS from Cognito (kid -> JWK), cached for JWKS_CACHE_TTL."""
+    now = time.time()
+    if (
+        not force
+        and _jwks_cache['keys']
+        and (now - _jwks_cache['last_updated']) < JWKS_CACHE_TTL
+    ):
         return _jwks_cache['keys']
 
     try:
-        url = get_jwks_url()
-        logger.info(f"Fetching JWKS from {url}")
-        response = requests.get(url, timeout=10)
+        logger.info(f"Fetching JWKS from {config.jwks_url}")
+        response = requests.get(config.jwks_url, timeout=10)
         response.raise_for_status()
-        jwks = response.json()
-
-        # Cache the keys
-        _jwks_cache['keys'] = {key['kid']: key for key in jwks['keys']}
-        _jwks_cache['last_updated'] = current_time
-
-        logger.info(f"JWKS cached with {len(_jwks_cache['keys'])} keys")
-        return _jwks_cache['keys']
-
+        keys = {key['kid']: key for key in response.json()['keys']}
+        _jwks_cache['keys'] = keys
+        _jwks_cache['last_updated'] = now
+        return keys
     except Exception as e:
         logger.error(f"Error fetching JWKS: {e}")
-        # Return cached keys if available, even if expired
         if _jwks_cache['keys']:
             logger.warning("Using expired JWKS cache")
             return _jwks_cache['keys']
         raise
 
 
-def get_public_key(token):
-    """Get the public key for a token from JWKS"""
-    try:
-        # Decode header without verification to get kid
-        unverified_header = jwt.get_unverified_header(token)
-        kid = unverified_header.get('kid')
+def _get_public_key(token: str, config: AuthConfig):
+    kid = jwt.get_unverified_header(token).get('kid')
+    if not kid:
+        raise TokenError("Token header missing 'kid'")
 
-        if not kid:
-            raise ValueError("Token header missing 'kid'")
-
-        jwks = fetch_jwks()
-
+    jwks = fetch_jwks(config)
+    if kid not in jwks:
+        # Keys may have rotated: refetch once
+        jwks = fetch_jwks(config, force=True)
         if kid not in jwks:
-            # Refresh cache and try again
-            _jwks_cache['last_updated'] = 0
-            jwks = fetch_jwks()
+            raise TokenError("Unknown signing key")
 
-            if kid not in jwks:
-                raise ValueError(f"Public key not found for kid: {kid}")
-
-        key_data = jwks[kid]
-
-        # Convert JWK to PEM format
-        from jwt.algorithms import RSAAlgorithm
-        public_key = RSAAlgorithm.from_jwk(json.dumps(key_data))
-
-        return public_key
-
-    except Exception as e:
-        logger.error(f"Error getting public key: {e}")
-        raise
+    from jwt.algorithms import RSAAlgorithm
+    return RSAAlgorithm.from_jwk(json.dumps(jwks[kid]))
 
 
-def validate_token(token):
-    """
-    Validate a Cognito JWT token.
-
-    Returns:
-        dict: Decoded token claims if valid
-
-    Raises:
-        Exception: If token is invalid
-    """
-    if not COGNITO_USER_POOL_ID:
-        raise ValueError("COGNITO_USER_POOL_ID not configured")
-
+def validate_access_token(token: str, config: AuthConfig) -> dict:
+    """Validate a Cognito access token and return its claims, or raise TokenError."""
     try:
-        public_key = get_public_key(token)
-
-        # Decode and validate the token
+        public_key = _get_public_key(token, config)
         claims = jwt.decode(
             token,
             public_key,
             algorithms=['RS256'],
-            issuer=get_issuer(),
-            options={
-                'verify_exp': True,
-                'verify_iss': True,
-                'verify_aud': False,  # Cognito access tokens don't have aud claim
-            }
+            issuer=config.issuer,
+            options={'verify_exp': True, 'verify_iss': True, 'verify_aud': False},
         )
-
-        # Verify token_use claim (should be 'access' or 'id')
-        token_use = claims.get('token_use')
-        if token_use not in ['access', 'id']:
-            raise ValueError(f"Invalid token_use: {token_use}")
-
-        return claims
-
+    except TokenError:
+        raise
     except jwt.ExpiredSignatureError:
-        raise ValueError("Token has expired")
+        raise TokenError("Token has expired")
     except jwt.InvalidIssuerError:
-        raise ValueError("Invalid token issuer")
+        raise TokenError("Invalid token issuer")
     except jwt.InvalidTokenError as e:
-        raise ValueError(f"Invalid token: {e}")
+        raise TokenError(f"Invalid token: {e}")
+    except Exception as e:
+        logger.error(f"Error validating token: {e}")
+        raise TokenError("Token validation failed")
+
+    if claims.get('token_use') != 'access':
+        raise TokenError("Invalid token_use: access token required")
+    if claims.get('client_id') != config.client_id:
+        raise TokenError("Token was not issued for this client")
+    return claims
+
+
+_config: Optional[AuthConfig] = None
 
 
 def require_auth(f):
-    """
-    Decorator to require authentication for a route.
-
-    Usage:
-        @app.route('/api/protected')
-        @require_auth
-        def protected_route():
-            user = g.user  # Access user info
-            return jsonify({'message': 'Hello, authenticated user!'})
-    """
+    """Require a valid Cognito access token in the Authorization header."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Skip auth for OPTIONS preflight requests (CORS)
-        # Return empty response - Flask-CORS will add the headers
+        # CORS preflight: Flask-CORS adds the headers
         if request.method == 'OPTIONS':
             return '', 200
 
-        # Skip auth if Cognito is not configured (development mode)
-        if not COGNITO_USER_POOL_ID:
-            logger.warning("COGNITO_USER_POOL_ID not set - authentication disabled")
-            g.user = None
-            return f(*args, **kwargs)
+        if _config is None:
+            logger.error("require_auth used before init_auth")
+            return jsonify({'error': 'Authentication unavailable'}), 500
 
-        # Get token from Authorization header
         auth_header = request.headers.get('Authorization', '')
-
         if not auth_header:
             return jsonify({'error': 'Authorization header required'}), 401
 
-        # Parse Bearer token
         parts = auth_header.split()
         if len(parts) != 2 or parts[0].lower() != 'bearer':
             return jsonify({'error': 'Invalid Authorization header format. Use: Bearer <token>'}), 401
 
-        token = parts[1]
-
         try:
-            # Validate token and get claims
-            claims = validate_token(token)
-
-            # Store user info in Flask's g object for access in route
-            g.user = {
-                'sub': claims.get('sub'),  # User ID
-                'email': claims.get('email'),
-                'username': claims.get('username') or claims.get('cognito:username'),
-                'token_use': claims.get('token_use'),
-            }
-
-            return f(*args, **kwargs)
-
-        except ValueError as e:
+            claims = validate_access_token(parts[1], _config)
+        except TokenError as e:
             logger.warning(f"Authentication failed: {e}")
             return jsonify({'error': str(e)}), 401
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return jsonify({'error': 'Authentication failed'}), 401
+
+        g.user = {
+            'sub': claims.get('sub'),
+            'username': claims.get('username'),
+            'token_use': claims.get('token_use'),
+        }
+        return f(*args, **kwargs)
 
     return decorated
 
 
-def init_auth(app):
+def init_auth(app, config: Optional[AuthConfig] = None):
     """
-    Initialize authentication middleware.
-
-    Call this during app startup to validate configuration.
+    Initialise auth. Raises RuntimeError (app refuses to start) when required
+    configuration is missing. JWKS prefetch is best-effort.
     """
-    if COGNITO_USER_POOL_ID:
-        logger.info(f"Cognito authentication enabled for pool: {COGNITO_USER_POOL_ID}")
+    global _config
+    prefetch = config is None
+    _config = config or AuthConfig.from_env()
+    logger.info(f"Cognito authentication enabled for pool: {_config.user_pool_id}")
+    if prefetch:
         try:
-            # Pre-fetch JWKS to validate configuration
-            fetch_jwks()
-            logger.info("JWKS pre-fetched successfully")
+            fetch_jwks(_config)
         except Exception as e:
-            logger.error(f"Failed to fetch JWKS during init: {e}")
-    else:
-        logger.warning("COGNITO_USER_POOL_ID not set - authentication disabled")
+            logger.error(f"JWKS prefetch failed (will retry on demand): {e}")
