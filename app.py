@@ -3,7 +3,7 @@ Thermal Viewer Backend API
 Flask server providing REST endpoints for thermal mosaic viewer
 """
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, g
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import ClientError
@@ -32,7 +32,15 @@ PAD_COMPLETENESS_MAX_WORKERS = 16
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend requests
+CORS(
+    app,
+    origins=[o.strip() for o in os.environ.get(
+        'CORS_ORIGINS',
+        'https://master.d1aqqm159oe3x8.amplifyapp.com,http://localhost:5173',
+    ).split(',') if o.strip()],
+    allow_headers=['Authorization', 'Content-Type'],
+    methods=['GET', 'POST', 'PATCH', 'OPTIONS'],
+)
 
 # Single source of truth for the backend version (SemVer). Bump on each
 # shippable change: PATCH = fix, MINOR = feature, MAJOR = breaking. Overridable
@@ -67,6 +75,23 @@ report_service = ReportService(
 
 # Initialize authentication
 init_auth(app)
+
+
+@app.route('/api/me', methods=['GET'])
+@require_auth
+def me():
+    """Current user: refresh email/name from userInfo and record the sign-in."""
+    ext = app.extensions['auth']
+    info = ext['userinfo_fetcher'](ext['config'], g.user['access_token'])
+    row = ext['store'].record_sign_in(g.user['sub'], email=info.get('email'), name=info.get('name'))
+    return jsonify({
+        'sub': g.user['sub'],
+        'username': g.user['username'],
+        'email': row.get('email'),
+        'name': row.get('name'),
+        'role': g.user['role'],
+        'permissions': g.user['permissions'],
+    })
 
 
 # Helper function to convert Decimal to float for JSON serialization

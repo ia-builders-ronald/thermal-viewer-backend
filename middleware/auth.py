@@ -14,9 +14,12 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Optional
 
-from flask import request, jsonify, g
+from flask import request, jsonify, g, current_app
 import jwt
 import requests
+
+from middleware.userinfo import fetch_userinfo
+from middleware.users import DEFAULT_ROLE, UserStore, permissions_for
 
 logger = logging.getLogger(__name__)
 
@@ -141,56 +144,104 @@ def validate_access_token(token: str, config: AuthConfig) -> dict:
     return claims
 
 
-_config: Optional[AuthConfig] = None
+def _unauthenticated(message: str):
+    return jsonify({'error': message, 'code': 'unauthenticated'}), 401
 
 
 def require_auth(f):
-    """Require a valid Cognito access token in the Authorization header."""
+    """Require a valid Cognito access token; load the user row and block check."""
     @wraps(f)
     def decorated(*args, **kwargs):
         # CORS preflight: Flask-CORS adds the headers
         if request.method == 'OPTIONS':
             return '', 200
 
-        if _config is None:
+        ext = current_app.extensions.get('auth')
+        if ext is None:
             logger.error("require_auth used before init_auth")
             return jsonify({'error': 'Authentication unavailable'}), 500
+        config, store = ext['config'], ext['store']
 
         auth_header = request.headers.get('Authorization', '')
         if not auth_header:
-            return jsonify({'error': 'Authorization header required'}), 401
+            return _unauthenticated('Authorization header required')
 
         parts = auth_header.split()
         if len(parts) != 2 or parts[0].lower() != 'bearer':
-            return jsonify({'error': 'Invalid Authorization header format. Use: Bearer <token>'}), 401
+            return _unauthenticated('Invalid Authorization header format. Use: Bearer <token>')
 
         try:
-            claims = validate_access_token(parts[1], _config)
+            claims = validate_access_token(parts[1], config)
         except TokenError as e:
             logger.warning(f"Authentication failed: {e}")
-            return jsonify({'error': str(e)}), 401
+            return _unauthenticated(str(e))
 
+        sub = claims.get('sub')
+        username = claims.get('username')
+        user = store.get(sub)
+        if user is None:
+            info = ext['userinfo_fetcher'](config, parts[1])
+            user = store.get_or_create(
+                sub, username, email=info.get('email'), name=info.get('name')
+            )
+        if user.get('blocked'):
+            return jsonify({
+                'error': 'Your access has been blocked. Contact your administrator.',
+                'code': 'blocked',
+            }), 403
+
+        role = user.get('role') or DEFAULT_ROLE
         g.user = {
-            'sub': claims.get('sub'),
-            'username': claims.get('username'),
-            'token_use': claims.get('token_use'),
+            'sub': sub,
+            'username': username,
+            'email': user.get('email'),
+            'name': user.get('name'),
+            'role': role,
+            'permissions': permissions_for(role),
+            'access_token': parts[1],
         }
         return f(*args, **kwargs)
 
     return decorated
 
 
-def init_auth(app, config: Optional[AuthConfig] = None):
+def require_permission(name: str):
+    """Require a permission on g.user. Use after @require_auth."""
+    def wrap(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if request.method == 'OPTIONS':
+                return '', 200
+            if name not in g.user.get('permissions', []):
+                return jsonify({
+                    'error': 'You do not have permission to do this.',
+                    'code': 'forbidden',
+                }), 403
+            return f(*args, **kwargs)
+        return decorated
+    return wrap
+
+
+def init_auth(app, config: Optional[AuthConfig] = None, store: Optional[UserStore] = None,
+              userinfo_fetcher=None):
     """
-    Initialise auth. Raises RuntimeError (app refuses to start) when required
-    configuration is missing. JWKS prefetch is best-effort.
+    Initialise auth and store it on app.extensions["auth"]. Raises RuntimeError
+    (app refuses to start) when required configuration is missing. No network
+    calls when a config is injected; the production JWKS prefetch is best-effort.
     """
-    global _config
     prefetch = config is None
-    _config = config or AuthConfig.from_env()
-    logger.info(f"Cognito authentication enabled for pool: {_config.user_pool_id}")
+    config = config or AuthConfig.from_env()
+    if store is None:
+        import boto3
+        store = UserStore(boto3.resource('dynamodb', region_name=config.region).Table(config.users_table))
+    app.extensions['auth'] = {
+        'config': config,
+        'store': store,
+        'userinfo_fetcher': userinfo_fetcher or fetch_userinfo,
+    }
+    logger.info(f"Cognito authentication enabled for pool: {config.user_pool_id}")
     if prefetch:
         try:
-            fetch_jwks(_config)
+            fetch_jwks(config)
         except Exception as e:
             logger.error(f"JWKS prefetch failed (will retry on demand): {e}")
