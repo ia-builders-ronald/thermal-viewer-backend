@@ -843,6 +843,44 @@ curl "https://dev-thermal.dabuilders.net/viewer/api/coverage/stats?site=leyte&se
 
 ---
 
+### 4.8 Authentication & Admin Endpoints
+
+All `/api/` endpoints require `Authorization: Bearer <Cognito access token>`
+(RS256, unexpired, `token_use=access`, `client_id` and `iss` matching config).
+`/health` and `/` are public. On first valid request a users-table row is
+created with role `viewer`. Blocked users get 403 `blocked`.
+
+Roles to permissions: `admin` = all of `view`, `admin_users`, `monitor_runs`,
+`operate_runs`, `edit_geo`, `write_notes`; `viewer` = `view`; `monitor` =
+`view`, `monitor_runs`; `operator` = `view`, `monitor_runs`, `operate_runs`;
+`geo_editor` = `view`, `edit_geo`; `notes` = `view`, `write_notes`.
+
+#### GET /api/me
+Returns the current user: `sub`, `username`, `email`, `name`, `role`, `permissions`.
+
+#### GET /api/admin/users
+Requires `admin_users`. Returns the list of users-table rows.
+
+#### PATCH /api/admin/users/{sub}
+Requires `admin_users`. Body: `{"role": "<role>", "blocked": true|false}` (either field).
+
+#### Error codes
+| Status | `error` | Meaning |
+|--------|---------|---------|
+| 401 | `unauthenticated` | Missing/invalid/expired token |
+| 403 | `blocked` | User is blocked |
+| 403 | `forbidden` | Role lacks the permission |
+| 400 | `invalid` | Unknown role or bad body |
+| 404 | `not_found` | No such user |
+| 409 | `self` | Admin tried to change/block themselves |
+| 409 | `last_admin` | Would remove the last active admin |
+| 502 | `cognito` | Cognito admin call failed |
+
+**First admin:** after the person signs in once, run
+`python scripts/set_role.py --email <email> --role admin`.
+
+---
+
 ## 5. Data Models & Schemas
 
 ### 5.1 DynamoDB Table: Images
@@ -1121,6 +1159,14 @@ colored/
 | `JOBS_TABLE`  | thermal-api-dev-jobs-7ecb7171     | DynamoDB jobs table          |
 | `PADS_TABLE`  | thermal-api-dev-pads-7ecb7171     | DynamoDB pads table          |
 | `PORT`        | 5001                              | Flask server port            |
+| `COGNITO_USER_POOL_ID` | (required)               | Cognito user pool            |
+| `COGNITO_CLIENT_ID`    | (required)               | App client; access-token `client_id` must match |
+| `COGNITO_DOMAIN`       | (required)               | Hosted UI bare hostname      |
+| `USERS_TABLE`          | (required)               | DynamoDB users table (roles) |
+| `COGNITO_REGION`       | ap-southeast-1           | Pool region                  |
+| `CORS_ORIGINS`         | (none)                   | Comma-separated allowed origins |
+
+The four required Cognito/users variables are mandatory: the app refuses to start without them (fail closed).
 
 **Docker Compose Override:**
 ```yaml
@@ -1482,21 +1528,19 @@ def decimal_to_float(obj):
 
 ### 8.4 Security
 
-**Authentication:** None (public API for development)
+**Authentication:** Cognito access token (Bearer) on every `/api/` endpoint; see section 4.8.
 
-**Authorization:** None (read-only data)
+**Authorization:** Role-based. Roles map to permissions; role and blocked flag live in the users table and are checked on every request (short cache).
 
 **Data Security:**
 - **HTTPS Only:** nginx enforces SSL/TLS
 - **Presigned URLs:** Time-limited (1 hour), no permanent public access
-- **Read-Only:** Backend cannot modify DynamoDB or S3 data
-- **CORS:** Enabled for all origins (development mode)
+- **Read-Only imagery:** Backend does not modify imagery data in S3
+- **CORS:** Restricted to `CORS_ORIGINS`
 
 **Future Security Enhancements:**
 - API key authentication
-- JWT-based user authentication (Cognito)
 - Rate limiting (API Gateway)
-- CORS whitelist (production domains only)
 - WAF (Web Application Firewall)
 
 ---

@@ -35,6 +35,10 @@ export S3_BUCKET=thermal-api-dev-storage-7ecb7171
 export IMAGES_TABLE=thermal-api-dev-images-7ecb7171
 export JOBS_TABLE=thermal-api-dev-jobs-7ecb7171
 export PADS_TABLE=thermal-api-dev-pads-7ecb7171
+export COGNITO_USER_POOL_ID=ap-southeast-1_fwuioqTOs
+export COGNITO_CLIENT_ID=7k3pdtsm3mq6p7tioajsgevnkn
+export COGNITO_DOMAIN=ap-southeast-1fwuioqtos.auth.ap-southeast-1.amazoncognito.com
+export USERS_TABLE=thermal-viewer-dev-users
 ```
 
 3. Run the server:
@@ -57,6 +61,49 @@ docker run -p 5001:5001 \
   -e JOBS_TABLE=thermal-api-dev-jobs-7ecb7171 \
   -e PADS_TABLE=thermal-api-dev-pads-7ecb7171 \
   thermal-viewer-backend
+```
+
+## Authentication and roles
+
+Every `/api/` endpoint requires a Cognito **access token** sent as
+`Authorization: Bearer <token>` (no query-string tokens). The token must be
+RS256-signed by the pool, unexpired, `token_use == "access"`, with `client_id`
+matching `COGNITO_CLIENT_ID`. `/health` and `/` are public.
+
+On the first valid request a row is created in the users table
+(`USERS_TABLE`, key `sub`) with role `viewer`. A `blocked` row gets 403.
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | all six |
+| `viewer` | `view` |
+| `monitor` | `view`, `monitor_runs` |
+| `operator` | `view`, `monitor_runs`, `operate_runs` |
+| `geo_editor` | `view`, `edit_geo` |
+| `notes` | `view`, `write_notes` |
+
+Permissions: `view`, `admin_users`, `monitor_runs`, `operate_runs`, `edit_geo`, `write_notes`.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/me` | Current user: sub, username, email, name, role, permissions |
+| `GET /api/admin/users` | List users (`admin_users`) |
+| `PATCH /api/admin/users/<sub>` | Body `{"role": ..., "blocked": ...}` (`admin_users`) |
+
+Error codes (JSON `{"error": "<code>"}`): 401 `unauthenticated`; 403 `blocked`
+or `forbidden`; 400 `invalid`; 404 `not_found`; 409 `self` (cannot change or
+block yourself) or `last_admin`; 502 `cognito`.
+
+**Required environment** (the app refuses to start if any is missing; there is
+no auth-off switch): `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
+`COGNITO_DOMAIN` (bare hostname), `USERS_TABLE`. Optional: `COGNITO_REGION`
+(default `ap-southeast-1`), `CORS_ORIGINS` (comma-separated allowed origins).
+
+**Making the first admin:** the person signs in once (creating their row), then:
+
+```bash
+python scripts/set_role.py --email me@example.com --role admin
+# or: --sub <cognito-sub>   [--table thermal-viewer-dev-users]
 ```
 
 ## API Endpoints

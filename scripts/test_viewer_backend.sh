@@ -17,15 +17,16 @@ set -uo pipefail
 #   IMAGES_TABLE   DynamoDB table       (default: thermal-api-dev-images-7ecb7171)
 #   AWS_REGION     region               (default: ap-southeast-1)
 #   AWS_PROFILE    read natively by the AWS CLI for the DynamoDB lookup
-#   AUTH_TOKEN     Cognito session token, sent as `Authorization: Bearer <token>`
+#   TOKEN          Cognito ACCESS token, sent as `Authorization: Bearer <token>`.
+#                  If unset, one is fetched with USER_PASSWORD_AUTH using:
+#   COGNITO_CLIENT_ID  app client id   (default: 7k3pdtsm3mq6p7tioajsgevnkn)
+#   TEST_USERNAME / TEST_PASSWORD  credentials of a test user with the
+#                  `viewer` role (the admin-forbidden check assumes non-admin)
 #   VERBOSE=true   print URLs + bodies
 #
-# Auth: this backend bypasses auth entirely when COGNITO_USER_POOL_ID /
-# COGNITO_CLIENT_ID are unset (the DEV deployment), so AUTH_TOKEN is optional
-# here. Against an auth-enabled deployment (EDC), every data endpoint is
-# @require_auth and will 401 without it. The suite probes for that up front and
-# stops with an explanation rather than reporting ~30 auth errors as product
-# failures.
+# Auth: every /api/ endpoint requires a Cognito access token (Bearer). The
+# suite sends one on every /api/ call and also checks: no token -> 401,
+# /api/me -> 200, and /api/admin/users as a non-admin -> 403.
 #
 # Hierarchy selection: the levels are NOT independent — a sector can have periods
 # with zero pads. The suite therefore walks sector × period until it finds a
@@ -42,14 +43,29 @@ SECTOR="${SECTOR:-}"
 IMAGES_TABLE="${IMAGES_TABLE:-thermal-api-dev-images-7ecb7171}"
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
-AUTH_TOKEN="${AUTH_TOKEN:-}"
+TOKEN="${TOKEN:-}"
+COGNITO_CLIENT_ID="${COGNITO_CLIENT_ID:-7k3pdtsm3mq6p7tioajsgevnkn}"
+
+# No token supplied: sign in as the test user. Neither the token nor the
+# password is ever echoed.
+if [ -z "$TOKEN" ]; then
+    if [ -z "${TEST_USERNAME:-}" ] || [ -z "${TEST_PASSWORD:-}" ]; then
+        echo "Set TOKEN, or TEST_USERNAME and TEST_PASSWORD (and optionally COGNITO_CLIENT_ID)." >&2
+        exit 2
+    fi
+    TOKEN=$(aws cognito-idp initiate-auth --region "$AWS_REGION" \
+        --auth-flow USER_PASSWORD_AUTH --client-id "$COGNITO_CLIENT_ID" \
+        --auth-parameters "USERNAME=$TEST_USERNAME,PASSWORD=$TEST_PASSWORD" \
+        --query AuthenticationResult.AccessToken --output text 2>/dev/null)
+    if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+        echo "Could not obtain a token for $TEST_USERNAME (check credentials, client id, and that USER_PASSWORD_AUTH is enabled)." >&2
+        exit 2
+    fi
+fi
 
 # Built once and expanded safely on bash 3.2 (macOS), where "${arr[@]}" on an
 # empty array trips `set -u`.
-CURL_AUTH=()
-if [ -n "$AUTH_TOKEN" ]; then
-    CURL_AUTH=(-H "Authorization: Bearer $AUTH_TOKEN")
-fi
+CURL_AUTH=(-H "Authorization: Bearer $TOKEN")
 
 # Colors for output
 RED='\033[0;31m'
@@ -227,8 +243,7 @@ if grep -qi '^cf-mitigated:' "$HEADER_FILE" 2>/dev/null || \
     echo "  ssh edc-thermal-web"
     echo "  BASE_URL=http://localhost:5001 ./test_viewer_backend.sh"
     echo ""
-    echo "That bypasses Cloudflare entirely. Add AUTH_TOKEN=... if the deployment"
-    echo "has Cognito enabled."
+    echo "That bypasses Cloudflare entirely."
     echo ""
     exit 2
 fi
@@ -246,30 +261,27 @@ status=$(extract_json_value '.status')
 assert "Service status is healthy (got: ${status:-<none>})" $?
 
 # ------------------------------------------------------------------------------
-# Auth probe — fail fast with one clear message rather than ~30 auth errors
-# masquerading as product failures. /health is auth-free, so this is the first
-# call that can reveal an auth requirement.
+# Auth checks — also a fail-fast: if the token is rejected, say so once rather
+# than reporting ~30 auth errors as product failures.
 # ------------------------------------------------------------------------------
+print_header "1b. Authentication"
+
+no_token_code=$(curl -s --max-time "$CURL_TIMEOUT" -o /dev/null -w "%{http_code}" "$BASE_URL/api/sites")
+[ "$no_token_code" = "401" ]
+assert "No token is rejected (HTTP $no_token_code, expected 401)" $?
+
 probe_code=$(curl -s --max-time "$CURL_TIMEOUT" ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} \
     -o /dev/null -w "%{http_code}" "$BASE_URL/api/sites")
-
 if [ "$probe_code" = "401" ] || [ "$probe_code" = "403" ]; then
     echo ""
-    if [ -z "$AUTH_TOKEN" ]; then
-        echo -e "${RED}This deployment requires authentication (HTTP $probe_code on /api/sites).${NC}"
-        echo "Every data endpoint is @require_auth. Re-run with a Cognito session token:"
-        echo ""
-        echo "  AUTH_TOKEN='<session token>' $0 $BASE_URL"
-        echo ""
-        echo "Grab one from the browser devtools on a logged-in session (the app sends it"
-        echo "as an Authorization: Bearer header, or as ?api_key= on older builds)."
-    else
-        echo -e "${RED}AUTH_TOKEN was supplied but rejected (HTTP $probe_code).${NC}"
-        echo "The token is probably expired — Cognito session tokens are short-lived."
-    fi
+    echo -e "${RED}The access token was rejected (HTTP $probe_code on /api/sites).${NC}"
+    echo "It is probably expired (60 min), the user is blocked, or the client id is wrong."
     echo ""
     exit 2
 fi
+
+test_endpoint "Get current user (/api/me)" "$BASE_URL/api/me"
+test_endpoint "Admin users list forbidden for non-admin" "$BASE_URL/api/admin/users" 403
 
 # ==============================================================================
 # 2. Data Discovery
