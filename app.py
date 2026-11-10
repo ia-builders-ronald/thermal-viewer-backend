@@ -41,6 +41,7 @@ CORS(
     ).split(',') if o.strip()],
     allow_headers=['Authorization', 'Content-Type'],
     methods=['GET', 'POST', 'PATCH', 'OPTIONS'],
+    max_age=600,
 )
 
 # Single source of truth for the backend version (SemVer). Bump on each
@@ -192,6 +193,7 @@ def decimal_to_float(obj):
 
 @app.route('/api/navigation', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_navigation():
     """Get full site → sector → periods (+ pads) hierarchy in one call for preloading dropdowns"""
     try:
@@ -306,6 +308,7 @@ def get_navigation():
 
 @app.route('/api/sites', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_sites():
     """Get list of all sites"""
     try:
@@ -336,6 +339,7 @@ def get_sites():
 
 @app.route('/api/sectors', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_sectors():
     """Get list of sectors for a site"""
     site = request.args.get('site')
@@ -374,6 +378,7 @@ def get_sectors():
 
 @app.route('/api/periods', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_periods():
     """Get list of periods for a site and sector"""
     site = request.args.get('site')
@@ -411,6 +416,7 @@ def get_periods():
 
 @app.route('/api/pads', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_pads():
     """Get list of pads for a site and sector (filtered by completeness)"""
     site = request.args.get('site')
@@ -483,6 +489,7 @@ def get_pads():
 
 @app.route('/api/mosaic/metadata', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_mosaic_metadata():
     """Get mosaic job metadata and statistics"""
     site = request.args.get('site')
@@ -506,6 +513,7 @@ def get_mosaic_metadata():
 
 @app.route('/api/mosaic/orthomosaic', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_orthomosaic_url():
     """Get presigned URL for orthomosaic GeoTIFF"""
     site = request.args.get('site')
@@ -530,6 +538,7 @@ def get_orthomosaic_url():
 
 @app.route('/api/mosaic/cameras', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_cameras():
     """Get camera positions as GeoJSON"""
     site = request.args.get('site')
@@ -557,6 +566,7 @@ def get_cameras():
 
 @app.route('/api/optical/<image_id>', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_optical_image(image_id):
     """Get presigned URL for optical image"""
     try:
@@ -569,6 +579,7 @@ def get_optical_image(image_id):
 
 @app.route('/api/thermal/<image_id>', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_thermal_image(image_id):
     """Get presigned URL for colored thermal image and colorbar"""
     palette = request.args.get('palette', 'medical')
@@ -584,6 +595,7 @@ def get_thermal_image(image_id):
 
 @app.route('/api/thermal/<image_id>/stats', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_thermal_stats(image_id):
     """Get temperature statistics for thermal image"""
     try:
@@ -600,6 +612,7 @@ def get_thermal_stats(image_id):
 
 @app.route('/api/coverage/stats', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_coverage_stats():
     """Get coverage statistics for a mosaic"""
     site = request.args.get('site')
@@ -624,6 +637,7 @@ def get_coverage_stats():
 
 @app.route('/api/pipemeasure/measurement/<site>/<sector>/<period>/<pad_id>', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_pipe_measurement(site, sector, period, pad_id):
     """
     Get pipe measurement data for a specific PAD.
@@ -661,6 +675,7 @@ def get_pipe_measurement(site, sector, period, pad_id):
 
 @app.route('/api/pipemeasure/measurements/<site>/<sector>/<period>', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_sector_measurements(site, sector, period):
     """
     Get all pipe measurements for a sector/period.
@@ -701,6 +716,7 @@ def get_sector_measurements(site, sector, period):
 
 @app.route('/api/report/<site>/<sector>/<period>', methods=['GET'])
 @require_auth
+@require_permission('view')
 def get_report(site, sector, period):
     """
     Get presigned URLs for pre-generated reports.
@@ -799,6 +815,7 @@ def get_report(site, sector, period):
 
 @app.route('/api/report/generate', methods=['POST'])
 @require_auth
+@require_permission('view')
 def generate_report():
     """
     Generate Line Loss Analytics PDF report.

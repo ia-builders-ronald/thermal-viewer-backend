@@ -85,6 +85,42 @@ def test_cors_preflight_get_from_amplify_origin_allows_authorization(app_module)
     assert r.headers["Access-Control-Allow-Origin"] == AMPLIFY
 
 
+def test_cors_preflight_carries_max_age(app_module):
+    r = app_module.app.test_client().options(
+        "/api/me",
+        headers={"Origin": AMPLIFY, "Access-Control-Request-Method": "GET"},
+    )
+    assert r.headers["Access-Control-Max-Age"] == "600"
+
+
+def test_every_data_route_requires_view_permission(app_module, make_token):
+    from middleware.auth import AuthConfig
+    cfg = AuthConfig.from_env()
+    ext = app_module.app.extensions["auth"]
+    ext["userinfo_fetcher"] = lambda c, t: {"email": "a@b.com", "name": "A B"}
+    ext["store"]._table.put_item(Item={
+        "sub": "user-sub-123", "username": "testuser", "role": "mystery", "blocked": False})
+    hdr = {"Authorization": "Bearer " + make_token(iss=cfg.issuer, client_id=cfg.client_id)}
+    client = app_module.app.test_client()
+    me = client.get("/api/me", headers=hdr)
+    assert me.status_code == 200
+    assert me.get_json()["permissions"] == []
+    seen = 0
+    for rule in app_module.app.url_map.iter_rules():
+        if not rule.rule.startswith("/api/") or rule.rule == "/api/me" \
+                or rule.rule.startswith("/api/admin/"):
+            continue
+        url = rule.rule
+        for arg in rule.arguments:
+            url = url.replace("<%s>" % arg, "x")
+        for method in rule.methods - {"OPTIONS", "HEAD"}:
+            r = client.open(url, method=method, headers=hdr)
+            assert r.status_code == 403, (method, rule.rule)
+            assert r.get_json()["code"] == "forbidden"
+            seen += 1
+    assert seen >= 15
+
+
 def test_cors_other_origin_not_allowed(app_module):
     r = app_module.app.test_client().options(
         "/api/me",

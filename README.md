@@ -60,6 +60,11 @@ docker run -p 5001:5001 \
   -e IMAGES_TABLE=thermal-api-dev-images-7ecb7171 \
   -e JOBS_TABLE=thermal-api-dev-jobs-7ecb7171 \
   -e PADS_TABLE=thermal-api-dev-pads-7ecb7171 \
+  -e COGNITO_USER_POOL_ID=<pool-id> \
+  -e COGNITO_CLIENT_ID=<app-client-id> \
+  -e COGNITO_DOMAIN=<hosted-ui-hostname> \
+  -e USERS_TABLE=<users-table> \
+  -e CORS_ORIGINS=https://master.d1aqqm159oe3x8.amplifyapp.com,http://localhost:5173 \
   thermal-viewer-backend
 ```
 
@@ -90,7 +95,7 @@ Permissions: `view`, `admin_users`, `monitor_runs`, `operate_runs`, `edit_geo`, 
 | `GET /api/admin/users` | List users (`admin_users`) |
 | `PATCH /api/admin/users/<sub>` | Body `{"role": ..., "blocked": ...}` (`admin_users`) |
 
-Error codes (JSON `{"error": "<code>"}`): 401 `unauthenticated`; 403 `blocked`
+Error responses are JSON `{"error": "<message>", "code": "<code>"}`. Codes: 401 `unauthenticated`; 403 `blocked`
 or `forbidden`; 400 `invalid`; 404 `not_found`; 409 `self` (cannot change or
 block yourself) or `last_admin`; 502 `cognito`.
 

@@ -865,8 +865,10 @@ Requires `admin_users`. Returns the list of users-table rows.
 Requires `admin_users`. Body: `{"role": "<role>", "blocked": true|false}` (either field).
 
 #### Error codes
-| Status | `error` | Meaning |
-|--------|---------|---------|
+Responses are `{"error": "<message>", "code": "<code>"}`; the table lists `code`.
+
+| Status | `code` | Meaning |
+|--------|--------|---------|
 | 401 | `unauthenticated` | Missing/invalid/expired token |
 | 403 | `blocked` | User is blocked |
 | 403 | `forbidden` | Role lacks the permission |
@@ -1164,7 +1166,7 @@ colored/
 | `COGNITO_DOMAIN`       | (required)               | Hosted UI bare hostname      |
 | `USERS_TABLE`          | (required)               | DynamoDB users table (roles) |
 | `COGNITO_REGION`       | ap-southeast-1           | Pool region                  |
-| `CORS_ORIGINS`         | (none)                   | Comma-separated allowed origins |
+| `CORS_ORIGINS`         | https://master.d1aqqm159oe3x8.amplifyapp.com,http://localhost:5173 | Comma-separated allowed origins |
 
 The four required Cognito/users variables are mandatory: the app refuses to start without them (fail closed).
 
@@ -1180,6 +1182,11 @@ services:
       - JOBS_TABLE=thermal-api-dev-jobs-7ecb7171
       - PADS_TABLE=thermal-api-dev-pads-7ecb7171
       - PORT=5001
+      - COGNITO_USER_POOL_ID=<pool-id>
+      - COGNITO_CLIENT_ID=<app-client-id>
+      - COGNITO_DOMAIN=<hosted-ui-hostname>
+      - USERS_TABLE=<users-table>
+      - CORS_ORIGINS=https://master.d1aqqm159oe3x8.amplifyapp.com,http://localhost:5173
 ```
 
 **Local Development:**

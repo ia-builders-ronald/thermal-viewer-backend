@@ -39,6 +39,9 @@ def main(argv=None) -> int:
         sub = args.sub
     else:
         wanted = args.email.strip().lower()
+        if not wanted:
+            print("--email must not be blank.", file=sys.stderr)
+            return 1
         matches = [u for u in store.list_users() if (u.get("email") or "").lower() == wanted]
         if not matches:
             print("No user with email %s in %s. Ask them to sign in once first." % (args.email, args.table),

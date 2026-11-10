@@ -54,3 +54,10 @@ def test_ambiguous_email_exits_nonzero(table, capsys):
     assert set_role.main(["--email", "ronald@example.com", "--role", "admin"]) == 1
     assert "More than one" in capsys.readouterr().err
     assert table.get_item(Key={"sub": "s1"})["Item"]["role"] == "viewer"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_email_rejected(table, capsys, blank):
+    assert set_role.main(["--email", blank, "--role", "admin"]) != 0
+    assert "blank" in capsys.readouterr().err
+    assert table.get_item(Key={"sub": "s1"})["Item"]["role"] == "viewer"
