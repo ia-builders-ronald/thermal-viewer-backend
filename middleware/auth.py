@@ -223,7 +223,7 @@ def require_permission(name: str):
 
 
 def init_auth(app, config: Optional[AuthConfig] = None, store: Optional[UserStore] = None,
-              userinfo_fetcher=None):
+              userinfo_fetcher=None, cognito_admin=None):
     """
     Initialise auth and store it on app.extensions["auth"]. Raises RuntimeError
     (app refuses to start) when required configuration is missing. No network
@@ -234,9 +234,16 @@ def init_auth(app, config: Optional[AuthConfig] = None, store: Optional[UserStor
     if store is None:
         import boto3
         store = UserStore(boto3.resource('dynamodb', region_name=config.region).Table(config.users_table))
+    if cognito_admin is None:
+        import boto3
+        from middleware.cognito_admin import CognitoAdmin
+        cognito_admin = CognitoAdmin(
+            boto3.client('cognito-idp', region_name=config.region), config.user_pool_id
+        )
     app.extensions['auth'] = {
         'config': config,
         'store': store,
+        'cognito_admin': cognito_admin,
         'userinfo_fetcher': userinfo_fetcher or fetch_userinfo,
     }
     logger.info(f"Cognito authentication enabled for pool: {config.user_pool_id}")

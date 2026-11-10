@@ -18,7 +18,8 @@ from services.camera_service import CameraService
 from services.image_service import ImageService
 from services.pipemeasure_service import PipeMeasureService
 from services.report_service import ReportService
-from middleware.auth import require_auth, init_auth
+from middleware.auth import require_auth, require_permission, init_auth
+from middleware.users import ROLES
 
 # Setup logging
 logging.basicConfig(
@@ -92,6 +93,76 @@ def me():
         'role': g.user['role'],
         'permissions': g.user['permissions'],
     })
+
+
+_ADMIN_USER_FIELDS = ('sub', 'username', 'email', 'name', 'role', 'blocked', 'last_sign_in', 'created_at')
+
+
+def _admin_user_view(row):
+    return {k: row.get(k) for k in _ADMIN_USER_FIELDS}
+
+
+def _admin_error(message, code, status):
+    return jsonify({'error': message, 'code': code}), status
+
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_auth
+@require_permission('admin_users')
+def admin_users():
+    return jsonify({'users': [_admin_user_view(u) for u in app.extensions['auth']['store'].list_users()]})
+
+
+@app.route('/api/admin/users/<sub>', methods=['PATCH'])
+@require_auth
+@require_permission('admin_users')
+def admin_update_user(sub):
+    """Change a user's role and/or blocked flag (blocked also disables the Cognito user)."""
+    ext = app.extensions['auth']
+    store, cognito = ext['store'], ext['cognito_admin']
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not (set(body) & {'role', 'blocked'}) or set(body) - {'role', 'blocked'}:
+        return _admin_error('Body must contain role and/or blocked.', 'invalid', 400)
+    role, blocked = body.get('role'), body.get('blocked')
+    if 'role' in body and role not in ROLES:
+        return _admin_error('Unknown role.', 'invalid', 400)
+    if 'blocked' in body and not isinstance(blocked, bool):
+        return _admin_error('blocked must be a boolean.', 'invalid', 400)
+
+    actor = g.user['sub']
+    if sub == actor:
+        return _admin_error('You cannot change your own access.', 'self', 409)
+    old = store.get(sub)
+    if old is None:
+        return _admin_error('User not found.', 'not_found', 404)
+
+    old_role, old_blocked = old.get('role'), bool(old.get('blocked'))
+    demotes = 'role' in body and role != 'admin'
+    if old_role == 'admin' and not old_blocked and (demotes or blocked is True) \
+            and store.count_admins() <= 1:
+        return _admin_error('At least one active admin is required.', 'last_admin', 409)
+
+    try:
+        updated = store.update(sub, role=role, blocked=blocked, updated_by=actor)
+    except KeyError:
+        return _admin_error('User not found.', 'not_found', 404)
+
+    if blocked is not None and blocked != old_blocked:
+        try:
+            cognito.disable(old['username']) if blocked else cognito.enable(old['username'])
+        except Exception as e:
+            logger.error(f"Cognito update failed for {sub}: {e}")
+            try:
+                store.update(sub, role=old_role, blocked=old_blocked, updated_by=actor)
+            except Exception as rollback_error:
+                logger.error(f"Rollback failed for {sub}: {rollback_error}")
+            return _admin_error('Could not update the sign-in service.', 'cognito', 502)
+
+    logger.info(
+        f"admin_change actor={actor} target={sub} role={old_role}->{updated.get('role')} "
+        f"blocked={old_blocked}->{bool(updated.get('blocked'))}"
+    )
+    return jsonify(_admin_user_view(updated))
 
 
 # Helper function to convert Decimal to float for JSON serialization

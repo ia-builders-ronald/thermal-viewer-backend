@@ -50,7 +50,7 @@ def test_every_api_route_requires_auth(app_module):
         url = rule.rule
         for arg in rule.arguments:
             url = url.replace("<%s>" % arg, "x")
-        for method in rule.methods & {"GET", "POST"}:
+        for method in rule.methods - {"OPTIONS", "HEAD"}:
             r = client.open(url, method=method)
             assert r.status_code == 401, (method, rule.rule)
             assert r.get_json()["code"] == "unauthenticated"
@@ -59,7 +59,6 @@ def test_every_api_route_requires_auth(app_module):
     assert client.get("/health").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="route added in Task 4")
 def test_cors_preflight_patch_from_amplify_origin(app_module):
     r = app_module.app.test_client().options(
         "/api/admin/users/x",
