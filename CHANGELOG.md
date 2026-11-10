@@ -12,6 +12,34 @@ The backend versions independently from the frontend — they deploy separately
 (Amplify vs ECR/EC2), so their numbers need not match. `1.1.0` is reconstructed
 from history; tagging began at `1.2.0`.
 
+## [1.4.0] — 2026-11-10
+Sign-in and roles: the DEV backend now enforces authentication and
+role-based permissions.
+### Added
+- Bearer **access-token validation** on data routes (Cognito access tokens
+  only; `client_id` and issuer are checked).
+- Users table `thermal-viewer-dev-users` holding each person's role and
+  state. Roles: `admin`, `viewer`, `monitor`, `operator`, `geo_editor`,
+  `notes`, each mapped to permissions. The `view` permission is required on
+  all data routes.
+- `GET /api/me` — the signed-in user's role and permissions.
+- `GET /api/admin/users` — list users (admin only).
+- `PATCH /api/admin/users/<sub>` — change a role or block/unblock (admin
+  only). Guards stop an admin changing themselves and removing the last
+  admin. Blocking disables the Cognito user and signs them out.
+- `scripts/set_role.py` — set a user's role from the command line.
+### Changed
+- **Fails closed:** the backend refuses to start if `COGNITO_USER_POOL_ID`,
+  `COGNITO_CLIENT_ID`, `COGNITO_DOMAIN` or `USERS_TABLE` is missing.
+- CORS is restricted to an allowlist (`CORS_ORIGINS`).
+- `scripts/test_viewer_backend.sh` now sends a token.
+### Breaking
+- Requests without a valid access token now get `401`.
+- ID tokens are rejected; only access tokens are accepted.
+- CORS is no longer open to all origins.
+- Requires the frontend `2.1.0` (or any client that sends a Bearer access
+  token).
+
 ## [1.3.0] — 2026-08-26
 ### Added
 - `GET /api/navigation` now returns a per-sector `pads` map (keyed by `pad_id`,

@@ -10,8 +10,12 @@ usually a sibling directory `../line-loss-analytics-backend/`.
 
 The EDC backend (`line-loss-analytics-backend`) is a **separate codebase** and has
 **diverged**: EDC has **Cognito auth enabled** (all data endpoints `@require_auth`)
-and **restricted CORS**; the deployed DEV backend runs with **auth disabled**
-(`COGNITO_USER_POOL_ID` unset) and **open CORS** (`CORS(app)`).
+and **restricted CORS**. Since v1.4.0 the DEV backend also enforces auth, but by a
+different design: **Bearer Cognito access tokens** (ID tokens rejected), **roles
+and permissions from the users table** (`thermal-viewer-dev-users`; `view` is
+required on data routes), and a **CORS allowlist** (`CORS_ORIGINS`). It **fails
+closed**: it will not start without `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
+`COGNITO_DOMAIN` and `USERS_TABLE`.
 
 When porting a shared change, **diff and hand-patch** the auth/CORS-touching bits
 (`app.py`, service classes) rather than copying — copying would flip EDC's auth or

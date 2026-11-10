@@ -48,7 +48,7 @@ CORS(
 # shippable change: PATCH = fix, MINOR = feature, MAJOR = breaking. Overridable
 # via the APP_VERSION env var for CI-injected builds. Surfaced on /health and /
 # for ops; see CHANGELOG.md for history.
-APP_VERSION = os.environ.get('APP_VERSION', '1.3.0')
+APP_VERSION = os.environ.get('APP_VERSION', '1.4.0')
 
 # Configuration from environment variables
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')

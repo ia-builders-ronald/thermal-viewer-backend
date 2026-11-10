@@ -33,11 +33,14 @@ history + the support log and are not git-tagged.
 | **1.11.0** | 2026-08-26 | Pad-first filter reorder: Site → Sector → Pad → Period (was …→Period→Pad). Period list is now per-pad (only periods that pad has imagery for), derived from the preloaded `/api/navigation` tree with no per-selection calls; selecting a pad auto-selects its most-recent period. Requires backend 1.3.0. | ✅ |
 | **1.12.0** | 2026-08-26 | **Beta (DEV only):** map landing view — a Classic/Map toggle switches to a satellite map where pads for a chosen site+period are drawn as clickable footprints (colored by sector, labeled by pad name) that hand off to the classic detail viewer. Purely additive; classic dropdown flow unchanged. | ✅ |
 | **2.0.0** | 2026-11-09 | **Flight Strip redesign.** New film-black top bar, swappable brand layer and design tokens; numbered frames grouped into flights, contact strip, frame inspector, unified map tool stack, tablet layout; site and sector map depths with the Site › Period › Sector › Pad path; Classic \| New flow switch (default New); restyled report (Pad and Length). | ✅ |
+| **2.1.0** | 2026-11-10 | **Sign-in and roles.** Cognito Hosted UI sign-in (Azure AD via SAML + username/password) with PKCE, in-memory tokens, Bearer header; Blocked and sign-in error screens; admin Users page (`#/users`); role in the user menu; `aws-amplify` and the in-app login form removed. Requires backend 1.4.0. | ✅ |
 
 ## Backend (`backend/`)
 
-Ops-facing version, surfaced on `GET /health` and `/`. The DEV backend runs
-**auth-disabled + open CORS** (differs from EDC — see `DEV_EDC_DIVERGENCE.md`).
+Ops-facing version, surfaced on `GET /health` and `/`. Since 1.4.0 the DEV backend
+**enforces auth (Cognito access tokens + roles) with a CORS allowlist**; before
+that it ran auth-disabled + open CORS. Auth still differs from EDC — see
+`DEV_EDC_DIVERGENCE.md`.
 
 | Version | Date | Coverage | Tag |
 |---|---|---|---|
@@ -45,9 +48,10 @@ Ops-facing version, surfaced on `GET /health` and `/`. The DEV backend runs
 | **1.1.0** | 2026-06-11 | Parallelized the per-pad completeness check (ThreadPoolExecutor). | reconstructed |
 | **1.2.0** | 2026-07-24 | `download` flag on `/api/mosaic/orthomosaic` (S3 `ResponseContentDisposition` filename); single-source `APP_VERSION` on `/health` + `/`. | ✅ |
 | **1.3.0** | 2026-08-26 | `GET /api/navigation` adds a per-sector `pads` map (pad_id → pad_name, geo_location_area, periods with imagery) enabling a pad-first filter order without extra API calls. | ✅ |
+| **1.4.0** | 2026-11-10 | **Sign-in and roles.** Bearer Cognito access-token validation, fail-closed start, users table with roles and permissions, `GET /api/me`, admin users endpoints, CORS allowlist, `scripts/set_role.py`. **Breaking:** 401 without a valid access token; ID tokens rejected. | ✅ |
 
 ## Current DEV versions
-- Frontend: **2.0.0** · Backend: **1.3.0**
+- Frontend: **2.1.0** · Backend: **1.4.0**
 
 ## Updating (each DEV release)
 1. Bump `package.json` (frontend) / `APP_VERSION` (backend) + add the `CHANGELOG.md` entry, commit, `git tag -a vX.Y.Z`, push branch + tag (per `VERSIONING.md`).
